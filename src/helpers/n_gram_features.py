@@ -67,7 +67,7 @@ def build_ngram_features(corpus, granularity, min_artists=50, top_n=100):
     """
 
     print("=" * 60)
-    print("Extracting n-grams from all lyrics...\n")
+    print("Extracting n-grams from all lyrics...")
     print("=" * 60)
     uni_vectorizer, uni_matrix, uni_features = extract_ngrams(
         corpus["full_lyrics"], 1, 1, "unigrams"
@@ -81,7 +81,7 @@ def build_ngram_features(corpus, granularity, min_artists=50, top_n=100):
 
     print("=" * 60)
     print(
-        f"Calculating tf-idf for combinations of n-grams and G{granularity} genres...\n"
+        f"Calculating tf-idf for combinations of n-grams and G{granularity} genres..."
     )
     print("=" * 60)
     uni_tfidf_cat = calculate_genre_tfidf(
@@ -96,7 +96,7 @@ def build_ngram_features(corpus, granularity, min_artists=50, top_n=100):
 
     print("=" * 60)
     print(
-        "Counting artists per ngram (and saving dictionrary and loading precomputed if possible), takes a while...\n"
+        "Counting artists per ngram (and saving dictionrary and loading precomputed if possible), takes a while..."
     )
     print("=" * 60)
 
@@ -123,7 +123,7 @@ def build_ngram_features(corpus, granularity, min_artists=50, top_n=100):
             pickle.dump(tri_artist_count, f)
 
     print("=" * 60)
-    print(f"Filtering ngrams occurring in at least {min_artists} artists...\n")
+    print(f"Filtering ngrams occurring in at least {min_artists} artists...")
     print("=" * 60)
 
     uni_tfidf_cat_filtered = filter_by_min_artists(
@@ -137,7 +137,7 @@ def build_ngram_features(corpus, granularity, min_artists=50, top_n=100):
     )
 
     print("=" * 60)
-    print("Ranking ngrams by genre and tfidf...\n")
+    print("Ranking ngrams by genre and tfidf...")
     print("=" * 60)
     uni_ranked_cat = rank_ngrams_by_genre(uni_tfidf_cat_filtered)
     bi_ranked_cat = rank_ngrams_by_genre(bi_tfidf_cat_filtered)
@@ -148,7 +148,7 @@ def build_ngram_features(corpus, granularity, min_artists=50, top_n=100):
     top_trigrams = get_top_ngrams(tri_ranked_cat, top_n)
 
     print("=" * 60)
-    print("Counting final ngrams in each track's lyrics\n")
+    print("Counting final ngrams in each track's lyrics")
     print("=" * 60)
 
     final_ngrams = set(top_unigrams).union(set(top_bigrams)).union(set(top_trigrams))

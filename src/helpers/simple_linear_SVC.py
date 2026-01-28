@@ -1,131 +1,80 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-import numpy as np
 import pickle
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.multiclass import OneVsOneClassifier
 from sklearn.svm import LinearSVC
-from sklearn.metrics import classification_report, f1_score, ConfusionMatrixDisplay
+from sklearn.metrics import f1_score, ConfusionMatrixDisplay
 
 
-def perform_linear_SVC(
-    features: pd.DataFrame, labels_and_artists: pd.DataFrame, granularity: int
+def perform_linear_svc(
+    features: pd.DataFrame,
+    labels_and_artists: pd.DataFrame,
+    granularity: int,
+    subsample: float = 1.0,
+    output_dir: str = "../models/fell_spohrleder_svm",
+    seed: int = 42,
 ) -> tuple[OneVsOneClassifier, pd.Series, pd.Series]:
     """
-    Train a One-vs-One Linear SVM classifier for genre classification
-    with penalty C = 1.0 following the methodology of Fell & Sporleder (2014)
-    without aggregating over multiple models.
+    Train One-vs-One Linear SVM for genre classification.
 
-    Additionally implements artist-stratified train/test splitting to prevent artist bias.
-    Features are
-    standardized before training.
+    Uses artist-stratified train/test split to prevent artist bias.
+    Features are standardized before training.
 
     Parameters
     ----------
     features : pd.DataFrame
         Feature matrix with shape (n_samples, n_features).
     labels_and_artists : pd.DataFrame
-        DataFrame containing at least two columns:
-        - 'cat{granularity}': genre labels for classification
-        - 'track.s.firstartist.name': artist identifiers for stratification
+        DataFrame with 'cat{granularity}' and
+        'track.s.firstartist.name' columns.
     granularity : int
-        Genre granularity level (used for model and output file naming).
+        Genre granularity level for model naming.
+    subsample : float, optional
+        Fraction of data to use (default 1.0).
+    output_dir : str, optional
+        Directory for saving model artifacts.
+    seed : int, optional
+        Random seed for reproducibility (default 42).
 
     Returns
     -------
     tuple[OneVsOneClassifier, pd.Series, pd.Series]
-        Trained model, test predictions, and test labels.
-
-    Notes
-    -----
-    - Ensures no artist overlap between train and test sets
-    - Saves model, predictions, and test labels to disk
-    - Displays genre distribution histograms and confusion matrix
+        Trained model, predictions, and test labels.
     """
-    X = features
-    y_full = labels_and_artists
-
-    # Create artist-level splits to avoid artist effects, stratified by most common artist genre
-    artist_genres = y_full.groupby("track.s.firstartist.name")[f"cat{granularity}"].agg(
-        lambda x: x.value_counts().index[0]
+    artists_train, artists_test = _split_by_artist(
+        labels_and_artists, granularity, seed
     )
-    artists_train, artists_test = train_test_split(
-        artist_genres.index,
-        test_size=0.2,
-        stratify=artist_genres.values,
-        random_state=42,
+    train_mask, test_mask = _create_train_test_masks(
+        labels_and_artists, artists_train, artists_test
     )
 
-    train_mask = y_full["track.s.firstartist.name"].isin(artists_train)
-    test_mask = y_full["track.s.firstartist.name"].isin(artists_test)
-
-    X_train = X[train_mask].reset_index(drop=True)
-    X_test = X[test_mask].reset_index(drop=True)
-    y_train = y_full.loc[train_mask, "cat12"].reset_index(drop=True)
-    y_test = y_full.loc[test_mask, "cat12"].reset_index(drop=True)
-
-    print("Training set size:", X_train.shape[0])
-    print("Test set size:", X_test.shape[0])
-    print(
-        "Number of unique artists in train:",
-        y_full.loc[train_mask, "track.s.firstartist.name"].nunique(),
-    )
-    print(
-        "Number of unique artists in test:",
-        y_full.loc[test_mask, "track.s.firstartist.name"].nunique(),
-    )
-    print(
-        "Artist overlap (should be 0):",
-        len(
-            set(y_full.loc[train_mask, "track.s.firstartist.name"]).intersection(
-                set(y_full.loc[test_mask, "track.s.firstartist.name"])
-            )
-        ),
+    X_train, X_test, y_train, y_test = _split_features_labels(
+        features, labels_and_artists, granularity, train_mask, test_mask
     )
 
-    # Plot histogram of genre distribution in train and test
-    fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-    y_train.value_counts().plot(
-        kind="bar", ax=ax[0], title="Training set genre distribution"
-    )
-    y_test.value_counts().plot(
-        kind="bar", ax=ax[1], title="Test set genre distribution"
+    X_train, X_test, y_train, y_test = _subsample_data(
+        X_train, X_test, y_train, y_test, granularity, subsample, seed
     )
 
-    # Normalize features (-mean, scale to unit variance)
+    _plot_genre_distribution(y_train, y_test)
+
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    # Fell + Sporleder 2014 also use a linear SVM with OVO classification, takes 4-5 min to train on 20% subsample
-    # Fell + Sporleder repeat 100-1000 times with different random train/test splits, we do it once here
-    ovo_clf = OneVsOneClassifier(LinearSVC(C=1.0, random_state=42, max_iter=10000))
+    ovo_clf = OneVsOneClassifier(
+        LinearSVC(C=1.0, random_state=seed, max_iter=10000), jobs=-3  # all but 2 cores
+    )
     ovo_clf.fit(X_train_scaled, y_train)
-    y_pred = ovo_clf.predict(X_test_scaled)
-    y_pred = pd.Series(y_pred)
+    y_pred = pd.Series(ovo_clf.predict(X_test_scaled))
 
-    # Save model artifacts
-    y_test.to_csv(
-        f"../models/fell_spohrleder_svm/english_cat{granularity}_svm_ovo_test_labels.csv",
-        index=False,
-    )
-    y_pred.to_csv(
-        f"../models/fell_spohrleder_svm/english_cat{granularity}_svm_ovo_predictions.csv",
-        index=False,
-    )
-    with open(
-        f"../models/fell_spohrleder_svm/english_cat{granularity}_svm_ovo_model.pkl",
-        "wb",
-    ) as f:
-        pickle.dump(ovo_clf, f)
+    _save_model_artifacts(y_test, y_pred, ovo_clf, granularity, output_dir)
 
-    # Evaluate and display results
-    print(
-        f"Macro F1 for cat{granularity}: {f1_score(y_test, y_pred, average='macro'):.3f}"
-    )
-    print(classification_report(y_test, y_pred))
+    macro_f1 = f1_score(y_test, y_pred, average="macro")
+
     ConfusionMatrixDisplay.from_predictions(
         y_test,
         y_pred,
@@ -135,4 +84,90 @@ def perform_linear_SVC(
         xticks_rotation="vertical",
     )
 
-    return ovo_clf, y_pred, y_test
+    return ovo_clf, y_pred, y_test, macro_f1
+
+
+def _get_artist_genres(labels_and_artists, granularity):
+    return labels_and_artists.groupby("track.s.firstartist.name")[
+        f"cat{granularity}"
+    ].agg(lambda x: x.value_counts().index[0])
+
+
+def _split_by_artist(labels_and_artists, granularity, seed):
+    artist_genres = _get_artist_genres(labels_and_artists, granularity)
+    artists_train, artists_test = train_test_split(
+        artist_genres.index,
+        test_size=0.2,
+        stratify=artist_genres.values,
+        random_state=seed,
+    )
+    return artists_train, artists_test
+
+
+def _create_train_test_masks(labels_and_artists, artists_train, artists_test):
+    train_mask = labels_and_artists["track.s.firstartist.name"].isin(artists_train)
+    test_mask = labels_and_artists["track.s.firstartist.name"].isin(artists_test)
+    return train_mask, test_mask
+
+
+def _split_features_labels(
+    features, labels_and_artists, granularity, train_mask, test_mask
+):
+    X_train = features[train_mask].reset_index(drop=True)
+    X_test = features[test_mask].reset_index(drop=True)
+    y_train = labels_and_artists.loc[train_mask, f"cat{granularity}"].reset_index(
+        drop=True
+    )
+    y_test = labels_and_artists.loc[test_mask, f"cat{granularity}"].reset_index(
+        drop=True
+    )
+    return X_train, X_test, y_train, y_test
+
+
+def _subsample_data(X_train, X_test, y_train, y_test, granularity, subsample, seed):
+    if subsample >= 1.0:
+        return X_train, X_test, y_train, y_test
+
+    Xy_train = pd.concat([X_train, y_train], axis=1)
+    Xy_test = pd.concat([X_test, y_test], axis=1)
+
+    Xy_train_sub = (
+        Xy_train.groupby(f"cat{granularity}")
+        .sample(frac=subsample, random_state=seed)
+        .reset_index(drop=True)
+    )
+    Xy_test_sub = (
+        Xy_test.groupby(f"cat{granularity}")
+        .sample(frac=subsample, random_state=seed)
+        .reset_index(drop=True)
+    )
+
+    return (
+        Xy_train_sub.drop(columns=[f"cat{granularity}"]),
+        Xy_test_sub.drop(columns=[f"cat{granularity}"]),
+        Xy_train_sub[f"cat{granularity}"],
+        Xy_test_sub[f"cat{granularity}"],
+    )
+
+
+def _plot_genre_distribution(y_train, y_test):
+    fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+    y_train.value_counts().plot(
+        kind="bar", ax=ax[0], title="Training set genre distribution"
+    )
+    y_test.value_counts().plot(
+        kind="bar", ax=ax[1], title="Test set genre distribution"
+    )
+
+
+def _save_model_artifacts(y_test, y_pred, ovo_clf, granularity, output_dir):
+    y_test.to_csv(
+        f"{output_dir}/english_cat{granularity}_test_labels.csv",
+        index=False,
+    )
+    y_pred.to_csv(
+        f"{output_dir}/english_cat{granularity}_predictions.csv",
+        index=False,
+    )
+    with open(f"{output_dir}/english_cat{granularity}_model.pkl", "wb") as f:
+        pickle.dump(ovo_clf, f)
