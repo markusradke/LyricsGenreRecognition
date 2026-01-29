@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: helpers
+Version: 0.1.0
+Summary: Genre classification for lyrics
+Requires-Python: >=3.11
