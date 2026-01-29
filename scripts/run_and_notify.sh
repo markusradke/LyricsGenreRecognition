@@ -50,7 +50,7 @@ case "$SCRIPT_EXT" in
         PROCESS_NAME="Rscript"
         ;;
     py)
-        INTERPRETER="python"
+        INTERPRETER="python -u" # unbuffered output
         SCRIPT_TYPE="Python"
         PROCESS_NAME="python"
         echo "ATTENTION: PLEASE MAKE SURE THE CORRECT PYTHON ENVIRONMENT IS ACTIVATED BEFORE RUNNING THIS SCRIPT."

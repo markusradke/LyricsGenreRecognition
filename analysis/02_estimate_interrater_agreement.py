@@ -5,7 +5,7 @@ from helpers.generate_report import generate_report
 
 genre_counts = pd.read_csv("data-raw/poptrag_lyrics_genre_counts.csv")
 
-N_MC = 1000
+N_MC = 10000
 SEED = 42
 
 print("ESTIMATING INTERRATER AGREEMENT (IRA) FOR 5 GENRES...")
