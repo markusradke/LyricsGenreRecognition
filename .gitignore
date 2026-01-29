@@ -1,7 +1,7 @@
 data
 data-raw
 models
-lyrics_env
+venv
 reports
 notebooks/.ipynb_checkpoints/
 src/helpers/__pycache__/

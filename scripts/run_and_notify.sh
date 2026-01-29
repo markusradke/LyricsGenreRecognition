@@ -2,7 +2,8 @@
 
 # Check if a script path is provided
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 <path_to_Rscript> [email_recipient] [update_interval_minutes] [max_log_size_mb] [max_restarts]"
+    echo "Usage: $0 <path_to_script> [email_recipient] [update_interval_minutes] [max_log_size_mb] [max_restarts]"
+    echo "  path_to_script: Path to R script (.R) or Python script (.py)"
     echo "  email_recipient: Email address for notifications (default: mail@markus-radke.de)"
     echo "  update_interval_minutes: Minutes between progress updates (default: 60)"
     echo "  max_restarts: Maximum number of restart attempts (default: 10)"
@@ -11,7 +12,7 @@ if [ $# -lt 1 ]; then
 fi
 
 # Script path is the first argument
-RSCRIPT_PATH="$1"
+SCRIPT_PATH="$1"
 
 # Optional email recipient (default if not provided)
 RECIPIENT="${2:-mail@markus-radke.de}"
@@ -27,18 +28,40 @@ MAX_LOG_SIZE_MB="${5:-100}"
 
 
 
-SUBJECT_SUCCESS="Rscript finished: $(basename "$RSCRIPT_PATH")"
-SUBJECT_FAIL="Rscript interrupted or failed: $(basename "$RSCRIPT_PATH")"
-SUBJECT_UPDATE="Rscript progress update: $(basename "$RSCRIPT_PATH")"
-SUBJECT_RESTART="Rscript restarting after interrupt: $(basename "$RSCRIPT_PATH")"
-SUBJECT_MAX_RESTARTS="Rscript failed after max restarts: $(basename "$RSCRIPT_PATH")"
-BODY_SUCCESS="Rscript $(basename "$RSCRIPT_PATH") completed successfully on $(hostname) at $(date)."
+SUBJECT_SUCCESS="$SCRIPT_TYPE script finished: $(basename "$SCRIPT_PATH")"
+SUBJECT_FAIL="$SCRIPT_TYPE script interrupted or failed: $(basename "$SCRIPT_PATH")"
+SUBJECT_UPDATE="$SCRIPT_TYPE script progress update: $(basename "$SCRIPT_PATH")"
+SUBJECT_RESTART="$SCRIPT_TYPE script restarting after interrupt: $(basename "$SCRIPT_PATH")"
+SUBJECT_MAX_RESTARTS="$SCRIPT_TYPE script failed after max restarts: $(basename "$SCRIPT_PATH")"
+BODY_SUCCESS="$SCRIPT_TYPE script $(basename "$SCRIPT_PATH") completed successfully on $(hostname) at $(date)."
 
 # Validate script exists
-if [ ! -f "$RSCRIPT_PATH" ]; then
-    echo "Error: R script not found at $RSCRIPT_PATH"
+if [ ! -f "$SCRIPT_PATH" ]; then
+    echo "Error: Script not found at $SCRIPT_PATH"
     exit 1
 fi
+
+# Detect script type and set appropriate command
+SCRIPT_EXT="${SCRIPT_PATH##*.}"
+case "$SCRIPT_EXT" in
+    R|r)
+        INTERPRETER="Rscript"
+        SCRIPT_TYPE="R"
+        PROCESS_NAME="Rscript"
+        ;;
+    py)
+        INTERPRETER="python"
+        SCRIPT_TYPE="Python"
+        PROCESS_NAME="python"
+        echo "ATTENTION: PLEASE MAKE SURE THE CORRECT PYTHON ENVIRONMENT IS ACTIVATED BEFORE RUNNING THIS SCRIPT."
+        ;;
+    *)
+        echo "Error: Unsupported script type. Use .R or .py files"
+        exit 1
+        ;;
+esac
+
+echo "Detected $SCRIPT_TYPE script: $(basename "$SCRIPT_PATH")"
 
 # Create temp files for tracking state
 LOG_FILE=$(mktemp)
@@ -264,7 +287,7 @@ _send_update() {
                     max_sys_mem=$(awk 'BEGIN{max=0} $3 != "N/A" && $3>max {max=$3} END {if(max>0) printf "%.1f", max; else print "N/A"}' "${STATS_FILE}.system")
                 fi
                 
-                BODY_UPDATE="Progress update for $(basename "$RSCRIPT_PATH") on $(hostname) at $(date).
+                BODY_UPDATE="Progress update for $(basename "$SCRIPT_PATH") on $(hostname) at $(date).
 Restart count: $restart_count
 Total runtime: $runtime_formatted
 
@@ -320,7 +343,7 @@ _on_exit() {
     
     # Send final notification using stored exit code
     if [ $FINAL_EXIT_CODE -eq 0 ]; then
-        BODY_SUCCESS="Rscript $(basename "$RSCRIPT_PATH") completed successfully on $(hostname) at $(date).
+        BODY_SUCCESS="$SCRIPT_TYPE script $(basename "$SCRIPT_PATH") completed successfully on $(hostname) at $(date).
 Total runtime: $runtime_formatted
 Total restarts: $final_restart_count
 
@@ -333,7 +356,7 @@ Peak Memory: ${peak_sys_mem}%
 $(tail -n 100 "$LOG_FILE")"
         echo "$BODY_SUCCESS" | mail -r markus@hendrix.ak.tu-berlin.de -s "$SUBJECT_SUCCESS" "$RECIPIENT"
     else
-        BODY_FAIL="Rscript $(basename "$RSCRIPT_PATH") stopped (exit code $FINAL_EXIT_CODE) on $(hostname) at $(date).
+        BODY_FAIL="$SCRIPT_TYPE script $(basename "$SCRIPT_PATH") stopped (exit code $FINAL_EXIT_CODE) on $(hostname) at $(date).
 Total runtime: $runtime_formatted
 Total restarts: $final_restart_count
 
@@ -370,39 +393,38 @@ echo "===== Update interval: ${UPDATE_INTERVAL} minutes =====" | tee -a "$LOG_FI
 echo "===== Max log size: ${MAX_LOG_SIZE_MB}MB =====" | tee -a "$LOG_FILE"
 echo "===== Max restarts: ${MAX_RESTARTS} =====" | tee -a "$LOG_FILE"
 
-# Main loop to run and restart R script
+# Main loop to run and restart script
 while [ "$(cat "$RUNNING_FLAG" 2>/dev/null)" = "1" ]; do
     # Log restart attempt with timestamp
     ATTEMPT_START=$(date +%s)
-    echo "===== Starting Rscript (attempt $((RESTART_COUNT + 1))) at $(date) =====" | tee -a "$LOG_FILE"
+    echo "===== Starting $SCRIPT_TYPE script (attempt $((RESTART_COUNT + 1))) at $(date) =====" | tee -a "$LOG_FILE"
     
-    # Run the R script with tee to show output AND save to log
-    # Use process substitution to capture the actual Rscript exit code
-    set -o pipefail  # Make pipe return exit code of first failed command
-    Rscript "$RSCRIPT_PATH" 2>&1 | tee -a "$LOG_FILE" &
+    # Run the script with tee to show output AND save to log
+    set -o pipefail
+    $INTERPRETER "$SCRIPT_PATH" 2>&1 | tee -a "$LOG_FILE" &
     TEE_PID=$!
     
-    # Wait a bit and find the actual Rscript process
+    # Wait a bit and find the actual script process
     sleep 0.5
     
-    # Try multiple methods to find the Rscript PID
-    RSCRIPT_PID=""
+    # Try multiple methods to find the script PID
+    SCRIPT_PID=""
     
     # Method 1: Look for child of tee
-    RSCRIPT_PID=$(pgrep -P $TEE_PID 2>/dev/null | head -1)
+    SCRIPT_PID=$(pgrep -P $TEE_PID 2>/dev/null | head -1)
     
-    # Method 2: Look for Rscript process with our script name
-    if [ -z "$RSCRIPT_PID" ]; then
-        RSCRIPT_PID=$(pgrep -f "Rscript.*$(basename "$RSCRIPT_PATH")" 2>/dev/null | head -1)
+    # Method 2: Look for process with our script name
+    if [ -z "$SCRIPT_PID" ]; then
+        SCRIPT_PID=$(pgrep -f "$PROCESS_NAME.*$(basename "$SCRIPT_PATH")" 2>/dev/null | head -1)
     fi
     
     # Method 3: Use the tee PID as fallback
-    if [ -z "$RSCRIPT_PID" ]; then
-        RSCRIPT_PID=$TEE_PID
+    if [ -z "$SCRIPT_PID" ]; then
+        SCRIPT_PID=$TEE_PID
     fi
     
-    echo "$RSCRIPT_PID" > "$PID_FILE"
-    echo "Monitoring PID: $RSCRIPT_PID (tee PID: $TEE_PID)" >&2
+    echo "$SCRIPT_PID" > "$PID_FILE"
+    echo "Monitoring PID: $SCRIPT_PID (tee PID: $TEE_PID)" >&2
     
     # Wait for the pipe to complete
     wait $TEE_PID
@@ -417,11 +439,11 @@ while [ "$(cat "$RUNNING_FLAG" 2>/dev/null)" = "1" ]; do
     ATTEMPT_DURATION=$((ATTEMPT_END - ATTEMPT_START))
     ATTEMPT_DURATION_FORMATTED=$(_format_duration $ATTEMPT_DURATION)
     
-    echo "===== Rscript finished with exit code $EXIT_CODE at $(date) (duration: $ATTEMPT_DURATION_FORMATTED) =====" | tee -a "$LOG_FILE"
+    echo "===== $SCRIPT_TYPE script finished with exit code $EXIT_CODE at $(date) (duration: $ATTEMPT_DURATION_FORMATTED) =====" | tee -a "$LOG_FILE"
     
     # If script completed successfully, exit the loop
     if [ $EXIT_CODE -eq 0 ]; then
-        echo "===== Rscript completed successfully at $(date) ====="
+        echo "===== $SCRIPT_TYPE script completed successfully at $(date) ====="
         FINAL_EXIT_CODE=0
         echo "0" > "$RUNNING_FLAG"
         exit 0
@@ -430,7 +452,7 @@ while [ "$(cat "$RUNNING_FLAG" 2>/dev/null)" = "1" ]; do
     # Script was interrupted or failed
     RESTART_COUNT=$((RESTART_COUNT + 1))
     echo "$RESTART_COUNT" > "$RESTART_FILE"
-    echo "===== Rscript interrupted (exit code $EXIT_CODE) at $(date) =====" | tee -a "$LOG_FILE"
+    echo "===== $SCRIPT_TYPE script interrupted (exit code $EXIT_CODE) at $(date) =====" | tee -a "$LOG_FILE"
     
     # Check if max restarts exceeded
     if [ $RESTART_COUNT -ge $MAX_RESTARTS ]; then
@@ -441,7 +463,7 @@ while [ "$(cat "$RUNNING_FLAG" 2>/dev/null)" = "1" ]; do
         local runtime_formatted=$(_format_duration $total_runtime)
         
         # Send max restarts notification
-        BODY_MAX_RESTARTS="Rscript $(basename "$RSCRIPT_PATH") failed after $MAX_RESTARTS restart attempts on $(hostname) at $(date).
+        BODY_MAX_RESTARTS="$SCRIPT_TYPE script $(basename "$SCRIPT_PATH") failed after $MAX_RESTARTS restart attempts on $(hostname) at $(date).
 Last exit code: $EXIT_CODE
 Total runtime: $runtime_formatted
 
@@ -462,7 +484,7 @@ $(tail -n 100 "$LOG_FILE")"
     local runtime_formatted=$(_format_duration $total_runtime)
     
     # Send restart notification
-    BODY_RESTART="Rscript $(basename "$RSCRIPT_PATH") was interrupted on $(hostname) at $(date).
+    BODY_RESTART="$SCRIPT_TYPE script $(basename "$SCRIPT_PATH") was interrupted on $(hostname) at $(date).
 Exit code: $EXIT_CODE
 Attempt duration: $ATTEMPT_DURATION_FORMATTED
 Total runtime so far: $runtime_formatted
