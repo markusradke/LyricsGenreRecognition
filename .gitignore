@@ -2,3 +2,7 @@ data
 data-raw
 models
 lyrics_env
+reports
+notebooks/.ipynb_checkpoints/
+src/helpers/__pycache__/
+*nbconvert*
