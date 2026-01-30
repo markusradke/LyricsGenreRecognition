@@ -4,42 +4,12 @@ import numpy as np
 import pandas as pd
 
 
-class InterRaterResult:
-    def __init__(
-        self,
-        n_mc_runs: int,
-        overall_macro_f1: float,
-        per_genre_f1: pd.Series,
-        per_run_overall_macro_f1: np.ndarray,
-    ):
-        self.n_mc_runs = n_mc_runs
-        self.overall_macro_f1 = overall_macro_f1
-        self.per_genre_f1 = per_genre_f1
-        self.per_run_overall_macro_f1 = per_run_overall_macro_f1
-
-        self.overall_macro_f1_std = float(np.std(per_run_overall_macro_f1))
-        self.overall_macro_f1_ci = (
-            float(np.percentile(per_run_overall_macro_f1, 2.5)),
-            float(np.percentile(per_run_overall_macro_f1, 97.5)),
-        )
-
-    def __str__(self):
-        return (
-            "Simulated Interrater Agreement:\n"
-            "===============================\n"
-            f"Number of MC runs: {self.n_mc_runs}\n"
-            f"Overall Macro F1: {self.overall_macro_f1:.3f} (sd: {self.overall_macro_f1_std:.3f}, CI: {self.overall_macro_f1_ci[0]:.3f}-{self.overall_macro_f1_ci[1]:.3f})\n"
-            "===============================\n"
-            f"Per-Genre F1:\n{self.per_genre_f1.to_string()}\n"
-        )
-
-
 def monte_carlo_interrater_agreement_f1(
     df: pd.DataFrame,
     granularity: int,
     n_mc: int = 1000,
     seed: int = 42,
-) -> InterRaterResult:
+) -> pd.DataFrame:
     """
     Monte Carlo estimate of inter-rater agreement under a multinomial model.
 
@@ -53,9 +23,7 @@ def monte_carlo_interrater_agreement_f1(
       - Compute macro-F1 between y1 and y2; also per-genre (one-vs-rest) F1 averaged over MC
 
     Returns:
-      - overall_macro_f1: mean macro-F1 over MC runs
-      - per_genre_f1: mean per-genre F1 over MC runs (index = genre)
-      - per_run_overall_macro_f1: macro-F1 for each MC run
+      - DataFrame with per-genre F1 scores (colums: iteration, genre, f1)
     """
     _, counts_df = _extract_count_columns(df, granularity=granularity)
     genres = list(counts_df.columns)
@@ -66,30 +34,19 @@ def monte_carlo_interrater_agreement_f1(
     rng = np.random.default_rng(seed)
     _, G = counts.shape
 
-    per_run_macro = np.empty(n_mc, dtype=float)
     per_run_perclass = np.empty((n_mc, G), dtype=float)
 
-    for k in range(n_mc):
-        P = counts / row_sums[:, None]
+    P = counts / row_sums[:, None]  # compute propensities once
 
+    for k in range(n_mc):
         y1 = _sample_categorical_from_probs_rowwise(P, rng)
         y2 = _sample_categorical_from_probs_rowwise(P, rng)
+        per_run_perclass[k, :] = _per_class_f1(y_true=y1, y_pred=y2, n_classes=G)
 
-        macro_f1, per_f1 = _macro_and_per_class_f1(y_true=y1, y_pred=y2, n_classes=G)
-        per_run_macro[k] = macro_f1
-        per_run_perclass[k, :] = per_f1
-
-    per_genre_f1 = pd.Series(
-        per_run_perclass.mean(axis=0), index=pd.Index(genres, name="genre"), name="f1"
-    )
-    overall_macro_f1 = float(per_run_macro.mean())
-
-    return InterRaterResult(
-        n_mc_runs=n_mc,
-        overall_macro_f1=overall_macro_f1,
-        per_genre_f1=per_genre_f1,
-        per_run_overall_macro_f1=per_run_macro,
-    )
+    iterations = np.repeat(np.arange(n_mc), G)
+    genres_arr = np.tile(genres, n_mc)
+    f1_flat = per_run_perclass.ravel()
+    return pd.DataFrame({"iteration": iterations, "genre": genres_arr, "f1": f1_flat})
 
 
 def _extract_count_columns(
@@ -132,12 +89,12 @@ def _sample_categorical_from_probs_rowwise(
     return (u <= cdf).argmax(axis=1)
 
 
-def _macro_and_per_class_f1(
+def _per_class_f1(
     y_true: np.ndarray, y_pred: np.ndarray, n_classes: int
 ) -> Tuple[float, np.ndarray]:
     """
-    Computes macro-F1 and per-class F1 for single-label multi-class classification.
-    Simple implementation via confusion counts (no sklearn).
+    Computes per-class F1 for single-label multi-class classification.
+    Simple implementation via confusion counts.
     """
     per_f1 = np.zeros(n_classes, dtype=float)
 
@@ -149,5 +106,32 @@ def _macro_and_per_class_f1(
         denom = 2 * tp + fp + fn
         per_f1[c] = (2 * tp / denom) if denom > 0 else 0.0
 
-    macro_f1 = float(per_f1.mean()) if n_classes > 0 else 0.0
-    return macro_f1, per_f1
+    return per_f1
+
+
+def print_simulated_interrater_agreement(mc):
+    n_mc = mc["iteration"].nunique()
+    macro_f1_iter = mc.groupby("iteration")["f1"].mean()
+    mean_macro_f1 = macro_f1_iter.mean()
+    std_macro_f1 = macro_f1_iter.std()
+    ci_macro_f1 = macro_f1_iter.quantile([0.025, 0.975]).values
+
+    mean_f1_per_genre = mc.groupby("genre")["f1"].mean()
+    std_f1_per_genre = mc.groupby("genre")["f1"].std()
+    ci_lower_per_genre = mc.groupby("genre")["f1"].quantile(0.025)
+    ci_upper_per_genre = mc.groupby("genre")["f1"].quantile(0.975)
+    per_genre_stat = pd.concat(
+        (mean_f1_per_genre, std_f1_per_genre, ci_lower_per_genre, ci_upper_per_genre),
+        axis=1,
+    )
+    per_genre_stat.columns = ["mean", "std", "CI lower", "CI upper"]
+    per_genre_stat.sort_values(by="mean", axis=0, ascending=False, inplace=True)
+    pd.options.display.float_format = "{:.3f}".format
+
+    print("SIMULATED INTERRATER AGREEMENT (MONTE CARLO):")
+    print("=" * 60)
+    print("MC iterations: %s" % format(n_mc, ","))
+    print(f"Mean Macro F1: {mean_macro_f1:.3f} ± {std_macro_f1:.3f} (stddev)")
+    print(f"95% CI: [{ci_macro_f1[0]:.3f}, {ci_macro_f1[1]:.3f}]")
+    print("=" * 60)
+    print(per_genre_stat)
