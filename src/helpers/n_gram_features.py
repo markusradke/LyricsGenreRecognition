@@ -101,25 +101,25 @@ def build_ngram_features(corpus, granularity, min_artists=50, top_n=100):
     print("=" * 60)
 
     try:
-        with open(f"../data/FS_G{granularity}_unigram_artist_count.pkl", "rb") as f:
+        with open(f"data/FS_G{granularity}_unigram_artist_count.pkl", "rb") as f:
             uni_artist_count = pickle.load(f)
     except FileNotFoundError:
         uni_artist_count = count_artists_per_ngram(corpus, uni_matrix, uni_features)
-        with open(f"../data/FS_G{granularity}_unigram_artist_count.pkl", "wb") as f:
+        with open(f"data/FS_G{granularity}_unigram_artist_count.pkl", "wb") as f:
             pickle.dump(uni_artist_count, f)
     try:
-        with open(f"../data/FS_G{granularity}_bigram_artist_count.pkl", "rb") as f:
+        with open(f"data/FS_G{granularity}_bigram_artist_count.pkl", "rb") as f:
             bi_artist_count = pickle.load(f)
     except FileNotFoundError:
         bi_artist_count = count_artists_per_ngram(corpus, bi_matrix, bi_features)
-        with open(f"../data/FS_G{granularity}_bigram_artist_count.pkl", "wb") as f:
+        with open(f"data/FS_G{granularity}_bigram_artist_count.pkl", "wb") as f:
             pickle.dump(bi_artist_count, f)
     try:
-        with open(f"../data/FS_G{granularity}_trigram_artist_count.pkl", "rb") as f:
+        with open(f"data/FS_G{granularity}_trigram_artist_count.pkl", "rb") as f:
             tri_artist_count = pickle.load(f)
     except FileNotFoundError:
         tri_artist_count = count_artists_per_ngram(corpus, tri_matrix, tri_features)
-        with open(f"../data/FS_G{granularity}_trigram_artist_count.pkl", "wb") as f:
+        with open(f"data/FS_G{granularity}_trigram_artist_count.pkl", "wb") as f:
             pickle.dump(tri_artist_count, f)
 
     print("=" * 60)
@@ -159,7 +159,7 @@ def build_ngram_features(corpus, granularity, min_artists=50, top_n=100):
 
     n_gram_features = count_final_ngrams_lyrics(corpus["full_lyrics"], final_ngrams)
     n_gram_features.to_csv(
-        f"../data/FS_G{granularity}_lyrics_n_gram_features.csv", index=False
+        f"data/FS_G{granularity}_lyrics_n_gram_features.csv", index=False
     )
     print(
         f"✓ Saved n-gram features to ../data/FS_G{granularity}_lyrics_n_gram_features.csv"
