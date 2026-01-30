@@ -1,8 +1,12 @@
 pyproject.toml
+src/helpers/adaptive_sampling.py
+src/helpers/bayesian_optimization.py
 src/helpers/generate_report.py
 src/helpers/interrater_agreement.py
 src/helpers/n_gram_features.py
-src/helpers/simple_linear_SVC.py
+src/helpers/split_group_stratified_and_join.py
+src/helpers/subsample_training_data.py
+src/helpers/training_pipeline.py
 src/helpers.egg-info/PKG-INFO
 src/helpers.egg-info/SOURCES.txt
 src/helpers.egg-info/dependency_links.txt
