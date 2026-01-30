@@ -4,7 +4,7 @@ from helpers.generate_report import generate_report
 
 genre_counts = pd.read_csv("data-raw/poptrag_lyrics_genre_counts.csv")
 
-N_MC = 10
+N_MC = 10000  # Number of Monte Carlo simulations
 SEED = 42
 GRANULARITIES = [5, 12, 25, 32]
 

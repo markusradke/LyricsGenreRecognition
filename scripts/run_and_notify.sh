@@ -4,8 +4,8 @@
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <path_to_script> [email_recipient] [update_interval_minutes] [max_log_size_mb] [max_restarts]"
     echo "  path_to_script: Path to R script (.R) or Python script (.py)"
-    echo "  email_recipient: Email address for notifications (default: mail@markus-radke.de)"
     echo "  update_interval_minutes: Minutes between progress updates (default: 60)"
+    echo "  email_recipient: Email address for notifications (default: mail@markus-radke.de)"
     echo "  max_restarts: Maximum number of restart attempts (default: 10)"
     echo "  max_log_size_mb: Maximum log file size in MB before rotation (default: 100)"
     exit 1
@@ -14,11 +14,11 @@ fi
 # Script path is the first argument
 SCRIPT_PATH="$1"
 
-# Optional email recipient (default if not provided)
-RECIPIENT="${2:-mail@markus-radke.de}"
-
 # Update interval in minutes (default: 60)
-UPDATE_INTERVAL="${3:-60}"
+UPDATE_INTERVAL="${2:-60}"
+
+# Optional email recipient (default if not provided)
+RECIPIENT="${3:-mail@markus-radke.de}"
 
 # Maximum restart attempts (default: 10)
 MAX_RESTARTS="${4:-10}"
