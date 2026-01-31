@@ -10,7 +10,12 @@ import pandas as pd
 import seaborn as sns
 from imblearn.pipeline import Pipeline as ImbPipeline
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, confusion_matrix, f1_score
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    f1_score,
+    cohen_kappa_score,
+)
 from sklearn.preprocessing import StandardScaler
 
 from .adaptive_sampling import AdaptiveSampler
@@ -137,11 +142,14 @@ def evaluate_model(
 
     macro_f1 = f1_score(y_test, y_pred, average="macro", zero_division=0)
 
+    cohen_kappa = cohen_kappa_score(y_test, y_pred)
+
     return {
         "predictions": y_pred,
         "classification_report": class_report,
         "confusion_matrix": conf_mat,
         "macro_f1": macro_f1,
+        "cohen_kappa": cohen_kappa,
     }
 
 

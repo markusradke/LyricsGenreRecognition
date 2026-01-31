@@ -6,3 +6,5 @@ reports
 notebooks/.ipynb_checkpoints/
 src/helpers/__pycache__/
 *nbconvert*
+notebooks/prototyping/models
+

@@ -9,89 +9,61 @@ from tqdm import tqdm
 from scipy.sparse import csr_matrix
 
 
-def build_ngram_features(corpus, granularity, min_artists=50, top_n=100):
-    """
-    Build n-gram based features from a lyrics corpus replicating Fell and Spohrleder (2014).
-    This function performs a multi-step pipeline to extract and select n-gram features
-    from song lyrics, then counts the selected n-grams in every track and returns a
-    table of feature counts.
-    Steps performed (high-level):
-    - Extract unigrams, bigrams and trigrams from corpus["full_lyrics"].
-    - Compute TF-IDF aggregated by genre at specified FOLDAT granularity (genre column named "cat{granularity}").
-    - Count the number of distinct artists in which each n-gram appears. These counts
-        are cached to disk as pickle files when first computed and reused on subsequent runs due to long computation time.
-    - Discard n-grams that appear in fewer than `min_artists` distinct artists.
-    - Rank n-grams per genre by TF-IDF and select the top `top_n` n-grams for each genre.
-    - Create a final union of selected unigrams, bigrams and trigrams.
-    - Count occurrences of each final n-gram in every track's lyrics.
-    - Save the resulting n-gram feature table to CSV and return it as a pandas DataFrame.
-    Parameters
-    - corpus (pandas.DataFrame or dict-like):
-            A table-like object providing at least:
-                - "full_lyrics": an iterable/Series of lyric strings (one entry per track).
-                - A genre/category column named "cat{granularity}" (e.g. "cat3" if granularity is "3")
-                    used to aggregate TF-IDF by genre.
-            The function assumes corpus supports indexing by column name (like a pandas DataFrame).
-    - granularity (str or convertible to str):
-            The genre granularity identifier used to form the genre column name
-            ("cat" + granularity) and file paths. Example values: "5", "12", "25", and "32".
-    - min_artists (int, optional, default=50):
-            Minimum number of distinct artists that must contain an n-gram for it to be
-            considered as a candidate feature. N-grams appearing in fewer artists are filtered out.
-    - top_n (int, optional, default=100):
-            Number of top-ranked n-grams to select per genre for each n-gram order
-            (unigram, bigram, trigram). Final feature set is the union of these selections.
-    Returns
-    - pandas.DataFrame:
-            A DataFrame (one row per track) containing counts of the final selected n-grams
-            in each track's lyrics. The function also writes this DataFrame to:
-                ../data/FS_G{granularity}_lyrics_n_gram_features.csv
-    Side effects
-    - Reads/writes cached pickle files for artist counts:
-            ../data/FS_G{granularity}_unigram_artist_count.pkl
-            ../data/FS_G{granularity}_bigram_artist_count.pkl
-            ../data/FS_G{granularity}_trigram_artist_count.pkl
-        If these files exist they are loaded; otherwise artist counts are computed and saved.
-    - Writes a CSV with the final n-gram feature table:
-            ../data/FS_G{granularity}_lyrics_n_gram_features.csv
-    - Prints progress and diagnostic messages to stdout.
-    Notes and assumptions
-    - The function expects helper functions to be available in the same module or scope:
-        extract_ngrams, calculate_genre_tfidf, count_artists_per_ngram, filter_by_min_artists,
-        rank_ngrams_by_genre, get_top_ngrams, count_final_ngrams_lyrics.
-    - granularity should be provided such that "cat" + granularity matches a column
-        in `corpus`. If granularity is passed as an int, it will be cast to str where needed.
-    - File I/O paths are relative; ensure the working directory and ../data/ exist and are writable.
-    Example
-    - build_ngram_features(corpus_df, granularity="3", min_artists=50, top_n=100)
+def build_ngram_features(corpus, min_artists=50, top_n=100):
+    """Build n-gram feature table from a lyrics corpus.
+
+    This runs the full n-gram extraction and selection pipeline:
+    extract unigrams/bigrams/trigrams, compute genre-level TF-IDF,
+    filter by artist diversity, select top n-grams per genre and count
+    final n-grams in each track.
+
+    Args:
+        corpus (pandas.DataFrame or dict-like):
+            Table-like object with at least "lyrics", a genre
+            column named "genre", and an artist column names "artist".
+        min_artists (int, optional):
+            Minimum distinct artists an n-gram must appear in to be kept.
+            Defaults to 50.
+        top_n (int, optional):
+            Number of top-ranked n-grams to select per genre per n-gram order.
+            Defaults to 100.
+
+    Returns:
+        pandas.DataFrame:
+            DataFrame (one row per track) containing counts of selected n-grams.
+
+    Raises:
+        KeyError: If required columns (e.g. "lyrics" or genre column)
+            are missing from `corpus`.
+
+    Example:
+        >>> df = build_ngram_features(corpus_df, granularity="3", min_artists=50)
     """
 
     print("=" * 60)
     print("Extracting n-grams from all lyrics...")
     print("=" * 60)
     uni_vectorizer, uni_matrix, uni_features = extract_ngrams(
-        corpus["full_lyrics"], 1, 1, "unigrams"
+        corpus["lyrics"], 1, 1, "unigrams"
     )
     bi_vectorizer, bi_matrix, bi_features = extract_ngrams(
-        corpus["full_lyrics"], 2, 2, "bigrams"
+        corpus["lyrics"], 2, 2, "bigrams"
     )
     tri_vectorizer, tri_matrix, tri_features = extract_ngrams(
-        corpus["full_lyrics"], 3, 3, "trigrams"
+        corpus["lyrics"], 3, 3, "trigrams"
     )
 
     print("=" * 60)
-    print(
-        f"Calculating tf-idf for combinations of n-grams and G{granularity} genres..."
-    )
+    print("Calculating tf-idf for combinations of n-grams and genres...")
     print("=" * 60)
     uni_tfidf_cat = calculate_genre_tfidf(
-        corpus, "cat" + str(granularity), uni_matrix, uni_features, "unigrams"
+        corpus, "genre", uni_matrix, uni_features, "unigrams"
     )
     bi_tfidf_cat = calculate_genre_tfidf(
-        corpus, "cat" + str(granularity), bi_matrix, bi_features, "bigrams"
+        corpus, "genre", bi_matrix, bi_features, "bigrams"
     )
     tri_tfidf_cat = calculate_genre_tfidf(
-        corpus, "cat" + str(granularity), tri_matrix, tri_features, "trigrams"
+        corpus, "genre", tri_matrix, tri_features, "trigrams"
     )
 
     print("=" * 60)
@@ -99,28 +71,9 @@ def build_ngram_features(corpus, granularity, min_artists=50, top_n=100):
         "Counting artists per ngram (and saving dictionrary and loading precomputed if possible), takes a while..."
     )
     print("=" * 60)
-
-    try:
-        with open(f"data/FS_G{granularity}_unigram_artist_count.pkl", "rb") as f:
-            uni_artist_count = pickle.load(f)
-    except FileNotFoundError:
-        uni_artist_count = count_artists_per_ngram(corpus, uni_matrix, uni_features)
-        with open(f"data/FS_G{granularity}_unigram_artist_count.pkl", "wb") as f:
-            pickle.dump(uni_artist_count, f)
-    try:
-        with open(f"data/FS_G{granularity}_bigram_artist_count.pkl", "rb") as f:
-            bi_artist_count = pickle.load(f)
-    except FileNotFoundError:
-        bi_artist_count = count_artists_per_ngram(corpus, bi_matrix, bi_features)
-        with open(f"data/FS_G{granularity}_bigram_artist_count.pkl", "wb") as f:
-            pickle.dump(bi_artist_count, f)
-    try:
-        with open(f"data/FS_G{granularity}_trigram_artist_count.pkl", "rb") as f:
-            tri_artist_count = pickle.load(f)
-    except FileNotFoundError:
-        tri_artist_count = count_artists_per_ngram(corpus, tri_matrix, tri_features)
-        with open(f"data/FS_G{granularity}_trigram_artist_count.pkl", "wb") as f:
-            pickle.dump(tri_artist_count, f)
+    uni_artist_count = count_artists_per_ngram(corpus, uni_matrix, uni_features)
+    bi_artist_count = count_artists_per_ngram(corpus, bi_matrix, bi_features)
+    tri_artist_count = count_artists_per_ngram(corpus, tri_matrix, tri_features)
 
     print("=" * 60)
     print(f"Filtering ngrams occurring in at least {min_artists} artists...")
@@ -157,30 +110,29 @@ def build_ngram_features(corpus, granularity, min_artists=50, top_n=100):
     )
     print(final_ngrams)
 
-    n_gram_features = count_final_ngrams_lyrics(corpus["full_lyrics"], final_ngrams)
-    n_gram_features.to_csv(
-        f"data/FS_G{granularity}_lyrics_n_gram_features.csv", index=False
-    )
-    print(
-        f"✓ Saved n-gram features to ../data/FS_G{granularity}_lyrics_n_gram_features.csv"
-    )
+    n_gram_features = count_final_ngrams_lyrics(corpus["lyrics"], final_ngrams)
     return n_gram_features
 
 
 def extract_ngrams(texts, n_min, n_max, name=""):
-    """
-    Extract n-grams from a collection of texts.
+    """Extract n-grams from texts using CountVectorizer.
 
-    Parameters:
-    - texts: list or Series of text documents
-    - n_min: minimum n-gram size (e.g., 1 for unigrams)
-    - n_max: maximum n-gram size (e.g., 1 for unigrams, 2 for bigrams)
-    - name: descriptive name for printing
+    The returned matrix contains raw counts per document.
+
+    Args:
+        texts (iterable): Iterable of text documents (strings).
+        n_min (int): Minimum n-gram size.
+        n_max (int): Maximum n-gram size.
+        name (str, optional): Descriptive name used in printed output.
 
     Returns:
-    - vectorizer: fitted CountVectorizer object
-    - matrix: sparse matrix of n-gram counts
-    - feature_names: list of n-gram strings
+        tuple: (vectorizer, matrix, feature_names)
+            vectorizer: fitted sklearn CountVectorizer
+            matrix: sparse matrix of n-gram counts (documents x features)
+            feature_names: array of feature name strings
+
+    Example:
+        >>> vec, mat, feats = extract_ngrams(["a b c", "b c d"], 1, 2, "demo")
     """
     vectorizer = CountVectorizer(
         ngram_range=(n_min, n_max),
@@ -197,24 +149,41 @@ def extract_ngrams(texts, n_min, n_max, name=""):
 
 
 def _get_random_sample(feature_names, sample_size=5, seed=42):
+    """Return a reproducible random sample of feature names.
+
+    Args:
+        feature_names (Sequence[str]): Sequence of feature strings.
+        sample_size (int, optional): Number of items to sample. Defaults to 5.
+        seed (int, optional): RNG seed for reproducibility. Defaults to 42.
+
+    Returns:
+        list[str]: Random sample from feature_names.
+    """
     rng = random.Random(seed)
     sample_count = min(sample_size, len(feature_names))
     return rng.sample(list(feature_names), k=sample_count)
 
 
 def calculate_genre_tfidf(df, genre_col, ngram_matrix, ngram_features, ngram_name):
-    """
-    Calculate TF-IDF scores for n-grams at the genre level. ngrams are counted only once per track
+    """Compute genre-level TF, IDF and TF-IDF for n-grams.
 
-    Parameters:
-    - df: DataFrame with 'genre' column
-    - genre_col: name of the genre column in df
-    - ngram_matrix: sparse matrix of n-gram counts per track
-    - ngram_features: array of n-gram strings
-    - ngram_name: name for printing (e.g., "unigrams")
+    TF is computed as the proportion of tracks within a genre that contain
+    the n-gram (counts are binary-per-track for presence). IDF uses a
+    smoothed log formula across genres.
+
+    Args:
+        df (pandas.DataFrame): DataFrame containing the genre column.
+        genre_col (str): Name of the genre column in df.
+        ngram_matrix (scipy.sparse matrix): Sparse count matrix (tracks x ngrams).
+        ngram_features (Sequence[str]): Sequence of n-gram strings.
+        ngram_name (str): Descriptive name used in printed output.
 
     Returns:
-    - genre_tfidf_df: DataFrame with genres, n_grams, and TF_IDF scores
+        pandas.DataFrame:
+            DataFrame with columns ["genre", "ngram", "count", "tf", "idf", "tfidf"].
+
+    Raises:
+        KeyError: If `genre_col` is not present in `df`.
     """
     print(
         f"Calculating genre-level TF-IDF for {ngram_name} with {genre_col} genres ..."
@@ -276,15 +245,14 @@ def calculate_genre_tfidf(df, genre_col, ngram_matrix, ngram_features, ngram_nam
 
 
 def rank_ngrams_by_genre(tfidf_df, top=100):
-    """
-    Rank n-grams by TF-IDF score within each genre.
+    """Sort TF-IDF DataFrame by genre and descending TF-IDF.
 
-    Parameters:
-    - tfidf_df: DataFrame with genre, ngram, and tfidf columns
-    - top_n: number of top n-grams to display per genre
+    Args:
+        tfidf_df (pandas.DataFrame): DataFrame with 'genre' and 'tfidf' columns.
+        top (int, optional): Not used in sorting; kept for API compatibility.
 
     Returns:
-    - ranked_df: DataFrame sorted by genre and tfidf score
+        pandas.DataFrame: Sorted DataFrame with highest TF-IDF per genre first.
     """
     ranked = tfidf_df.sort_values(
         by=["genre", "tfidf"], ascending=[True, False]
@@ -293,8 +261,13 @@ def rank_ngrams_by_genre(tfidf_df, top=100):
 
 
 def display_top_ngrams(ranked_df, ngram_name, top_n=10):
-    """
-    Display top n-grams per genre.
+    """Print top n-grams per genre to stdout.
+
+    Args:
+        ranked_df (pandas.DataFrame): Ranked TF-IDF DataFrame with 'genre' and
+            'ngram' columns.
+        ngram_name (str): Descriptive name for the n-gram group used in headers.
+        top_n (int, optional): Number of top n-grams to display per genre.
     """
     print("=" * 60)
     print(f"Top {top_n} {ngram_name} per genre")
@@ -310,23 +283,29 @@ def display_top_ngrams(ranked_df, ngram_name, top_n=10):
 
 
 def count_artists_per_ngram(df, ngram_matrix, ngram_features):
-    """
-    Count how many unique artists use each n-gram (optimized).
+    """Count number of unique artists that use each n-gram.
 
-    Parameters:
-    - df: DataFrame with 'artist' column
-    - ngram_matrix: sparse matrix of n-gram counts
-    - ngram_features: array of n-gram strings
+    This is optimized to operate on a sparse matrix and returns a mapping
+    from n-gram string to number of distinct artists that contain it.
+
+    Args:
+        df (pandas.DataFrame): DataFrame that must contain
+            "artist".
+        ngram_matrix (scipy.sparse matrix): Sparse count matrix (tracks x ngrams).
+        ngram_features (Sequence[str]): Sequence of n-gram strings.
 
     Returns:
-    - artist_count: dict mapping n-gram to number of unique artists
+        dict: Mapping {ngram: unique_artist_count}.
+
+    Raises:
+        KeyError: If "artist" is missing from df.
     """
     print("Counting artists per n-gram...")
 
     binary_matrix = (ngram_matrix > 0).astype(int)
     binary_matrix = binary_matrix.tocsc()
 
-    artist_series = df["track.s.firstartist.name"].reset_index(drop=True)
+    artist_series = df["artist"].reset_index(drop=True)
     artist_count = {}
 
     for ngram_idx in tqdm(range(len(ngram_features))):
@@ -340,20 +319,49 @@ def count_artists_per_ngram(df, ngram_matrix, ngram_features):
 
 
 def filter_by_min_artists(tfidf_df, artist_count, min_artists=10):
-    """
-    Filter tf-idf DataFrame to keep only n-grams used by at least min_artists unique artists.
+    """Filter TF-IDF rows by minimum artist diversity.
+
+    Args:
+        tfidf_df (pandas.DataFrame): DataFrame with an 'ngram' column.
+        artist_count (dict): Mapping from ngram to number of unique artists.
+        min_artists (int, optional): Minimum artists threshold. Defaults to 10.
+
+    Returns:
+        pandas.DataFrame: Filtered TF-IDF DataFrame.
     """
     filtered_df = tfidf_df[tfidf_df["ngram"].map(artist_count) >= min_artists].copy()
     return filtered_df
 
 
 def get_top_ngrams(ranked_df, top_n):
+    """Select top `top_n` unique n-grams per genre.
+
+    Args:
+        ranked_df (pandas.DataFrame): Ranked TF-IDF DataFrame with 'genre' and
+            'ngram' columns.
+        top_n (int): Number of top n-grams to take per genre.
+
+    Returns:
+        numpy.ndarray: Array of unique selected n-grams.
+    """
     ngrams = ranked_df.groupby("genre").head(top_n)["ngram"].unique()
     print("Total unique ngrams selected: %s" % format(len(ngrams), ","))
     return ngrams
 
 
 def count_final_ngrams_lyrics(lyrics, ngram_list):
+    """Count occurrences of a final vocabulary of n-grams in lyrics.
+
+    Args:
+        lyrics (iterable): Iterable of lyric strings (one per track).
+        ngram_list (iterable): Vocabulary of n-grams to count.
+
+    Returns:
+        pandas.DataFrame: DataFrame with one column per n-gram and counts per track.
+
+    Example:
+        >>> df = count_final_ngrams_lyrics(["hello world", "world hello"], ["hello", "world"])
+    """
     vectorizer = CountVectorizer(
         vocabulary=ngram_list,
         token_pattern=r"\b[\w']+\b",
