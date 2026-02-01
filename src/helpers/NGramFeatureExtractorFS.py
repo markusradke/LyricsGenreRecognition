@@ -4,7 +4,6 @@ import random
 
 from sklearn.feature_extraction.text import CountVectorizer
 from collections import defaultdict
-from tqdm import tqdm
 from scipy.sparse import csr_matrix
 
 
@@ -205,11 +204,18 @@ class NGramFeatureExtractorFS:
         artist_series = corpus["artist"].reset_index(drop=True)
         artist_count = {}
 
-        for ngram_idx in tqdm(range(len(ngram_features))):
+        total_ngrams = len(ngram_features)
+        milestones = {int(total_ngrams * p / 100): p for p in range(10, 100, 10)}
+
+        for ngram_idx in range(total_ngrams):
             track_indices = binary_matrix[:, ngram_idx].nonzero()[0]
             unique_artists = artist_series.iloc[track_indices].nunique()
             ngram = ngram_features[ngram_idx]
             artist_count[ngram] = unique_artists
+
+            if ngram_idx in milestones:
+                print(f"  {milestones[ngram_idx]}% complete")
+
         print(f"✓ Calculated artist diversity for {len(artist_count):,} n-grams")
 
         return artist_count
