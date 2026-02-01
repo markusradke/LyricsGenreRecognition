@@ -7,6 +7,7 @@ import warnings
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from joblib import Parallel, delayed
 from scipy.stats import qmc
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -116,52 +117,6 @@ def latin_hypercube_sample(
     return [_transform_sample_to_params(sample, param_space) for sample in samples]
 
 
-def _extract_eligible_penalties(
-    scores: np.ndarray, penalties: np.ndarray, threshold: float
-) -> tuple[np.ndarray, list[float]]:
-    """Extract penalties for models meeting threshold.
-
-    Args:
-        scores: Cross-validation scores
-        penalties: Penalty values for each model
-        threshold: Minimum score threshold
-
-    Returns:
-        Tuple of (eligible_indices, eligible_penalties)
-    """
-    eligible_indices = np.where(scores >= threshold)[0]
-    eligible_penalties = [penalties[i] for i in eligible_indices]
-    return eligible_indices, eligible_penalties
-
-
-def one_standard_error_rule(
-    scores: np.ndarray,
-    params: list[dict] | None,
-    penalties: np.ndarray,
-) -> tuple[int, int]:
-    """Select model using 1-SE rule for better generalization.
-
-    Args:
-        scores: Cross-validation scores
-        params: Parameter configurations (unused, kept for compatibility)
-        penalties: Penalty values (C parameter) for each model
-
-    Returns:
-        Tuple of (selected_index, best_score_index)
-    """
-    best_idx = np.argmax(scores)
-    best_score = scores[best_idx]
-    std_error = np.std(scores) / np.sqrt(len(scores))
-    threshold = best_score - std_error
-
-    eligible_indices, eligible_penalties = _extract_eligible_penalties(
-        scores, penalties, threshold
-    )
-
-    max_penalty_idx = eligible_indices[np.argmax(eligible_penalties)]
-    return max_penalty_idx, best_idx
-
-
 class BayesianOptimizer:
     """Bayesian optimizer for hyperparameter tuning."""
 
@@ -197,9 +152,10 @@ class BayesianOptimizer:
         self.n_jobs = n_jobs
         self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
         self.results: list[dict] = []
+        self.tuning_history: pd.DataFrame | None = None
         self.model_hash: str | None = None
 
-    def optimize(self, pipeline_factory, X, y) -> dict:
+    def run_search(self, pipeline_factory, X, y) -> dict:
         """Run optimization procedure with checkpointing.
 
         Args:
@@ -220,8 +176,27 @@ class BayesianOptimizer:
             pipeline_factory, X, y, initial_params, completed_initial
         )
         self._run_bayesian_phase(pipeline_factory, X, y)
+        self._build_tuning_history()
 
-        return self._select_best_params()
+        return self.tuning_history
+
+    def _build_tuning_history(self) -> None:
+        """Build tuning history DataFrame from results."""
+        records = []
+        param_names = sorted(self.param_space.keys())
+
+        for i, result in enumerate(self.results):
+            iteration = 0 if i < self.n_initial else i - self.n_initial + 1
+            record = {
+                "iteration": iteration,
+                "score_mean": result["score_mean"],
+                "score_se": result["score_se"],
+            }
+            for param_name in param_names:
+                record[param_name] = result["params"][param_name]
+            records.append(record)
+
+        self.tuning_history = pd.DataFrame(records)
 
     def _initialize_optimization(self, X) -> None:
         """Initialize optimization state and create model hash.
@@ -310,9 +285,13 @@ class BayesianOptimizer:
         for i, params in enumerate(remaining_params):
             idx = completed_initial + i + 1
             print(f"Initial evaluation {idx}/{self.n_initial}")
-            score = self._evaluate_params(pipeline_factory, params, X, y)
-            self.results.append({"params": params, "score": score})
-            print(f"Score: {score:.4f}")
+            mean_score, std_error = self._evaluate_params(
+                pipeline_factory, params, X, y
+            )
+            self.results.append(
+                {"params": params, "score_mean": mean_score, "score_se": std_error}
+            )
+            print(f"Score: {mean_score:.4f} ± {std_error:.4f}")
             print("-" * 60)
 
             if self.checkpoint_dir:
@@ -335,11 +314,15 @@ class BayesianOptimizer:
             for params in remaining_params
         )
 
-        for i, (params, score) in enumerate(zip(remaining_params, results_parallel)):
+        for i, (params, (mean_score, std_error)) in enumerate(
+            zip(remaining_params, results_parallel)
+        ):
             idx = completed_initial + i + 1
-            self.results.append({"params": params, "score": score})
+            self.results.append(
+                {"params": params, "score_mean": mean_score, "score_se": std_error}
+            )
             print(f"Initial evaluation {idx}/{self.n_initial}")
-            print(f"Score: {score:.4f}")
+            print(f"Score: {mean_score:.4f} ± {std_error:.4f}")
             print("-" * 60)
 
         if self.checkpoint_dir:
@@ -361,10 +344,14 @@ class BayesianOptimizer:
         for iteration in range(completed_bayesian, self.n_iterations):
             print(f"Bayesian iteration {iteration + 1}/{self.n_iterations}")
             next_params = self._suggest_next_params()
-            score = self._evaluate_params(pipeline_factory, next_params, X, y)
-            self.results.append({"params": next_params, "score": score})
+            mean_score, std_error = self._evaluate_params(
+                pipeline_factory, next_params, X, y
+            )
+            self.results.append(
+                {"params": next_params, "score_mean": mean_score, "score_se": std_error}
+            )
 
-            print(f"Score: {score:.4f}")
+            print(f"Score: {mean_score:.4f} ± {std_error:.4f}")
             print("-" * 60)
 
             if self.checkpoint_dir:
@@ -383,7 +370,7 @@ class BayesianOptimizer:
         }
         save_checkpoint(checkpoint_data, self.checkpoint_dir, self.model_hash)
 
-    def _evaluate_params(self, pipeline_factory, params, X, y) -> float:
+    def _evaluate_params(self, pipeline_factory, params, X, y) -> tuple[float, float]:
         """Evaluate parameter configuration using cross-validation.
 
         Args:
@@ -393,7 +380,7 @@ class BayesianOptimizer:
             y: Training labels
 
         Returns:
-            Mean cross-validation score
+            Tuple of (mean_score, standard_error)
         """
         pipeline = pipeline_factory(params)
 
@@ -412,7 +399,9 @@ class BayesianOptimizer:
                 n_jobs=-1,
             )
 
-        return np.mean(scores)
+        mean_score = np.mean(scores)
+        std_error = np.std(scores, ddof=1) / np.sqrt(len(scores))
+        return mean_score, std_error
 
     def _suggest_next_params(self) -> dict[str, float]:
         """Suggest next parameter configuration using Gaussian process.
@@ -443,7 +432,7 @@ class BayesianOptimizer:
                 for r in self.results
             ]
         )
-        y_train = np.array([r["score"] for r in self.results])
+        y_train = np.array([r["score_mean"] for r in self.results])
         return X_train, y_train
 
     def _fit_gaussian_process(
@@ -495,21 +484,47 @@ class BayesianOptimizer:
         best_idx = np.argmax(acquisition)
         return candidates[best_idx]
 
-    def _select_best_params(self) -> dict:
-        """Select best parameters using 1-SE rule.
+    def select_best_one_se(
+        self, param_parsim: str, ascending: bool = False
+    ) -> dict[str, float]:
+        """Select best model using 1-SE rule.
+
+        Args:
+            param_parsim: Parameter name to use for parsimony selection
+            ascending: If True, select lowest parameter value as most parsimonious.
+                      If False (default), select highest value as most parsimonious.
 
         Returns:
-            Dictionary with best parameters and scores
+            Dictionary with selected parameter configuration
+
+        Raises:
+            ValueError: If tuning_history is not available or param_parsim not in history
         """
-        scores = np.array([r["score"] for r in self.results])
-        penalties = np.array([r["params"]["C"] for r in self.results])
+        if self.tuning_history is None:
+            raise ValueError("tuning_history not available. Run run_search() first.")
 
-        selected_idx, best_idx = one_standard_error_rule(scores, None, penalties)
+        if param_parsim not in self.tuning_history.columns:
+            raise ValueError(
+                f"Parameter '{param_parsim}' not found in tuning history. "
+                f"Available: {list(self.tuning_history.columns)}"
+            )
 
-        return {
-            "best_params": self.results[selected_idx]["params"],
-            "best_score": self.results[selected_idx]["score"],
-            "absolute_best_params": self.results[best_idx]["params"],
-            "absolute_best_score": self.results[best_idx]["score"],
-            "all_results": self.results,
+        best_idx = self.tuning_history["score_mean"].idxmax()
+        best_score = self.tuning_history.loc[best_idx, "score_mean"]
+        best_se = self.tuning_history.loc[best_idx, "score_se"]
+        threshold = best_score - best_se
+
+        eligible_mask = self.tuning_history["score_mean"] >= threshold
+        eligible_models = self.tuning_history[eligible_mask]
+
+        if ascending:
+            selected_idx = eligible_models[param_parsim].idxmin()
+        else:
+            selected_idx = eligible_models[param_parsim].idxmax()
+
+        param_names = sorted(self.param_space.keys())
+        selected_params = {
+            param: self.tuning_history.loc[selected_idx, param] for param in param_names
         }
+
+        return selected_params

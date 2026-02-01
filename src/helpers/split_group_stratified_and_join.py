@@ -82,7 +82,9 @@ def _split_X_labels(
     return X_train, X_test, y_train, y_test
 
 
-def plot_genre_distribution(y_train: pd.Series, y_test: pd.Series) -> plt.Figure:
+def plot_comparison_genre_distributions(
+    y_train: pd.Series, y_test: pd.Series
+) -> plt.Figure:
     """Plot relative label frequencies for train and test as grouped horizontal bars.
 
     Args:
