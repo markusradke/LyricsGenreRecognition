@@ -109,4 +109,11 @@ def train_model_with_optimization(
     print("Retraining best pipeline on full training data...")
     best_pipeline.fit(X_train, y_train)
 
-    return best_pipeline, best_params, tuning_history
+    classifier: LogisticRegression = best_pipeline.named_steps["classifier"]
+    model_coefficients = pd.DataFrame(
+        classifier.coef_.T,
+        columns=classifier.classes_,
+        index=X_train.columns,
+    )
+
+    return best_pipeline, best_params, model_coefficients, tuning_history

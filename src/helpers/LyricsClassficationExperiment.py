@@ -29,8 +29,9 @@ class LyricsClassificationExperiment:
     y_test: Series
     feature_type: str
     model: object
-    model_parameters = Dict[str, float]
-    cv_tuning_history = DataFrame
+    model_parameters: Dict[str, float]
+    model_coefficients: DataFrame
+    cv_tuning_history: DataFrame
     random_state: int
     subsample_debug: float
 
@@ -143,18 +144,21 @@ class LyricsClassificationExperiment:
             )
 
         checkpoint_dir = self.output_dir + "/optimization_checkpoints"
-        self.model, self.model_parameters, self.cv_tuning_history = (
-            train_model_with_optimization(
-                self.X_train,
-                self.y_train,
-                param_space,
-                cv=cv,
-                n_initial=n_initial,
-                n_iterations=n_iterations,
-                n_jobs=n_jobs,
-                checkpoint_dir=checkpoint_dir,
-                random_state=self.random_state,
-            )
+        (
+            self.model,
+            self.model_parameters,
+            self.model_coefficients,
+            self.cv_tuning_history,
+        ) = train_model_with_optimization(
+            self.X_train,
+            self.y_train,
+            param_space,
+            cv=cv,
+            n_initial=n_initial,
+            n_iterations=n_iterations,
+            n_jobs=n_jobs,
+            checkpoint_dir=checkpoint_dir,
+            random_state=self.random_state,
         )
 
     def save_experiment(self):
@@ -184,6 +188,8 @@ class LyricsClassificationExperiment:
             print(f"  {parameter}: {value:.3f}")
         print("=" * 60)
         y_pred = self.model.predict(self.X_test)
+        print(LyricsClassificationMetrics(self.y_test, y_pred))
+        print("=" * 60)
         print(classification_report(self.y_test, y_pred))
         # metrics (make metrics per class available: P, R, F1)
         # confusion matrix

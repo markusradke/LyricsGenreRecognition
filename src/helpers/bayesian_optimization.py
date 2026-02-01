@@ -370,6 +370,18 @@ class BayesianOptimizer:
         }
         save_checkpoint(checkpoint_data, self.checkpoint_dir, self.model_hash)
 
+    def _determine_cv_n_jobs(self) -> int:
+        """Determine number of jobs for cross-validation.
+
+        Returns:
+            Number of parallel jobs for CV:
+            - 1 if n_jobs is None or 1 (sequential processing)
+            - min(n_jobs, cv) otherwise (cap at number of folds)
+        """
+        if self.n_jobs is None or self.n_jobs == 1:
+            return 1
+        return min(self.n_jobs, self.cv)
+
     def _evaluate_params(self, pipeline_factory, params, X, y) -> tuple[float, float]:
         """Evaluate parameter configuration using cross-validation.
 
@@ -388,6 +400,8 @@ class BayesianOptimizer:
             n_splits=self.cv, shuffle=True, random_state=self.random_state
         )
 
+        cv_n_jobs = self._determine_cv_n_jobs()
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             scores = cross_val_score(
@@ -396,7 +410,7 @@ class BayesianOptimizer:
                 y,
                 cv=cv_splitter,
                 scoring=self.scoring,
-                n_jobs=-1,
+                n_jobs=cv_n_jobs,
             )
 
         mean_score = np.mean(scores)

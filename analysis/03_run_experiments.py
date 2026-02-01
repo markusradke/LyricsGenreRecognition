@@ -20,7 +20,7 @@ def run_experiment(corpus, granularity):
         genrecol=f"cat{granularity}",
         lyricscol="full_lyrics",
         artistcol="track.s.firstartist.name",
-        output_dir=f"cat{granularity}_mock_experiment",
+        output_dir=f"models/cat{granularity}_FS_experiment",
         test_size=0.2,
         random_state=42,
     )
@@ -29,4 +29,7 @@ def run_experiment(corpus, granularity):
         param_space=PARAM_SPACE, cv=3, n_initial=10, n_iterations=10, n_jobs=30
     )
     exp.save_experiment()
-    pass
+
+
+for granularity in GRANULARITIES:
+    run_experiment(english, granularity)
