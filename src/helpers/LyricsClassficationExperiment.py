@@ -13,7 +13,7 @@ from helpers.split_group_stratified_and_join import (
 )
 from helpers.LyricsClassificationMetrics import LyricsClassificationMetrics
 from helpers.NGramFeatureExtractorFS import NGramFeatureExtractorFS
-from helpers.training_pipeline import train_model_with_optimization
+from helpers.GenreClassifierTrainer import GenreClassifierTrainer
 
 
 class LyricsClassificationExperiment:
@@ -135,31 +135,63 @@ class LyricsClassificationExperiment:
             f"Fell-Spohrleder (2014) N-grams (top {top_n}, min. {min_artists} artists)"
         )
 
-    def tune_and_train_logistic_regression(
-        self, param_space, cv=5, n_initial=20, n_iterations=50, n_jobs=-1
-    ):
+    def _ensure_features(self):
         if self.X_train is None:
             raise ValueError(
                 "Features not computed. Call compute_fs_ngram_features() first."
             )
 
+    def _create_trainer(self, n_jobs=None):
+        if n_jobs is None:
+            return GenreClassifierTrainer(self.X_train, self.y_train, self.random_state)
+        return GenreClassifierTrainer(
+            self.X_train, self.y_train, self.random_state, n_jobs
+        )
+
+    def _fit_and_store_results(self, trainer, method_name, *args, **kwargs):
+        fit_fn = getattr(trainer, method_name)
+        fit_fn(*args, **kwargs)
+        results = trainer.get_results()
+        self.model = results.get("pipeline", None)
+        self.model_parameters = results.get("params", {})
+        self.model_coefficients = results.get("coefficients", pd.DataFrame())
+        self.cv_tuning_history = results.get("tuning_history", pd.DataFrame())
+
+    def tune_and_train_logistic_regression(
+        self, param_space, cv=5, n_initial=20, n_iterations=50, n_jobs=-1
+    ):
+        self._ensure_features()
         checkpoint_dir = self.output_dir + "/optimization_checkpoints"
-        (
-            self.model,
-            self.model_parameters,
-            self.model_coefficients,
-            self.cv_tuning_history,
-        ) = train_model_with_optimization(
-            self.X_train,
-            self.y_train,
+        trainer = self._create_trainer(n_jobs)
+        self._fit_and_store_results(
+            trainer,
+            "fit_with_bayesian_optimization",
             param_space,
-            cv=cv,
             n_initial=n_initial,
             n_iterations=n_iterations,
+            cv=cv,
             n_jobs=n_jobs,
             checkpoint_dir=checkpoint_dir,
-            random_state=self.random_state,
+            parsimony_param="C",
         )
+
+    def train_fixed_parametrer_logistic_regression(
+        self, C=1.0, l1_ratio=0.5, target_ratio=3.0
+    ):
+        self._ensure_features()
+        trainer = self._create_trainer()
+        self._fit_and_store_results(
+            trainer,
+            "fit_with_fixed_params",
+            C=C,
+            l1_ratio=l1_ratio,
+            target_ratio=target_ratio,
+        )
+        results = trainer.get_results()
+        self.model = results["pipeline"]
+        self.model_parameters = results["params"]
+        self.model_coefficients = results["coefficients"]
+        self.cv_tuning_history = pd.DataFrame()
 
     def save_experiment(self):
         with open(self.output_dir + "/complete_experiment.pkl", "wb") as f:
@@ -193,4 +225,17 @@ class LyricsClassificationExperiment:
         print(classification_report(self.y_test, y_pred))
         # metrics (make metrics per class available: P, R, F1)
         # confusion matrix
-        # top n coefficients per genre
+
+    def show_top_coefficients_per_genre(self, top_n=10):
+        genres = self.model_coefficients.columns
+        for genre in genres:
+            print(f"Top {top_n} coefficients for genre: {genre.upper()}")
+            top_coeffs = (
+                self.model_coefficients[genre]
+                .abs()
+                .sort_values(ascending=False)
+                .head(top_n)
+            )
+            for feature, value in top_coeffs.items():
+                print(f"{feature} ({self.model_coefficients.at[feature, genre]:.3f})")
+            print("\n")

@@ -22,6 +22,7 @@ def generate_report(notebook_path: str, output_path: str = "reports") -> None:
         [
             "jupyter",
             "nbconvert",
+            # "--execute", # TODO: Fix execution issues later
             "--to",
             "html",
             "--output",
