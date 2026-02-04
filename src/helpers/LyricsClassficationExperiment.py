@@ -13,6 +13,7 @@ from helpers.split_group_stratified_and_join import (
 )
 from helpers.LyricsClassificationMetrics import LyricsClassificationMetrics
 from helpers.NGramFeatureExtractorFS import NGramFeatureExtractorFS
+from helpers.NGramFeatureExtractorInformed import NGramFeatureExtractorInformed
 from helpers.GenreClassifierTrainer import GenreClassifierTrainer
 
 
@@ -133,6 +134,18 @@ class LyricsClassificationExperiment:
         self.X_test = ngram_extractor.transform(self.corpus_test["lyrics"])
         self.feature_type = (
             f"Fell-Spohrleder (2014) N-grams (top {top_n}, min. {min_artists} artists)"
+        )
+
+    def compute_informed_ngram_features(self, min_artists=50, top_n=100):
+        ngram_extractor = NGramFeatureExtractorInformed(
+            min_artists=min_artists,
+            top_n=top_n,
+            random_state=self.random_state,
+        )
+        self.X_train = ngram_extractor.fit(self.corpus_train)
+        self.X_test = ngram_extractor.transform(self.corpus_test["lyrics"])
+        self.feature_type = (
+            f"Informed N-grams (top {top_n}, min. {min_artists} artists)"
         )
 
     def _ensure_features(self):
