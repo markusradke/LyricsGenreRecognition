@@ -29,7 +29,7 @@ english.to_csv("data/poptrag_lyrics_genres_corpus_filtered_english.csv", index=T
 english_lemmatizer = CorpusLemmatizer(english, lyrics_column="full_lyrics")
 english_lemmatizer.lemmatize()
 english_lemmatizer.save_lemmatized(
-    "data/poptrag_lyrics_genres_corpus_filtered_english_lemmatized.csv", index=True
+    "data/poptrag_lyrics_genres_corpus_filtered_english_lemmatized.csv"
 )
 
 

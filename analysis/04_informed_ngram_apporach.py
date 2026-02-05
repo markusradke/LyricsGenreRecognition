@@ -11,7 +11,9 @@ PARAM_SPACE = {
     "target_ratio": [np.log10(1), np.log10(5)],
 }
 
-english = pd.read_csv("data/poptrag_lyrics_genres_corpus_filtered_english.csv")
+english = pd.read_csv(
+    "data/poptrag_lyrics_genres_corpus_filtered_english_lemmatized.csv"
+)
 
 
 def run_experiment(corpus, granularity):
@@ -20,11 +22,11 @@ def run_experiment(corpus, granularity):
         genrecol=f"cat{granularity}",
         lyricscol="full_lyrics",
         artistcol="track.s.firstartist.name",
-        output_dir=f"models/cat{granularity}_FS_experiment",
+        output_dir=f"models/cat{granularity}_informed_ngram_experiment",
         test_size=0.2,
         random_state=42,
     )
-    exp.compute_fs_ngram_features(min_artists=MIN_ARTISTS, top_n=TOP_N)
+    exp.compute_informed_ngram_features(min_artists=MIN_ARTISTS, top_n=TOP_N)
     exp.tune_and_train_logistic_regression(
         param_space=PARAM_SPACE, cv=3, n_initial=10, n_iterations=10, n_jobs=30
     )

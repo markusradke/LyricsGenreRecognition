@@ -4,6 +4,7 @@ import numpy as np
 from sklearn.feature_extraction.text import CountVectorizer
 from scipy.sparse import csr_matrix, vstack
 
+from helpers.BoundaryStripper import BoundaryStripper
 from helpers.NGramFeatureExctractor import NGramFeatureExtractor
 from helpers.StopwordFilter import StopwordFilter
 
@@ -19,6 +20,7 @@ class NGramFeatureExtractorInformed(NGramFeatureExtractor):
     ):
         super().__init__(min_artists, top_n, random_state)
         self.stopword_filter = StopwordFilter()
+        self.boundary_stripper = BoundaryStripper()
 
     def fit(self, corpus: pd.DataFrame) -> pd.DataFrame:
         """Extract and select n-gram features from corpus.
@@ -30,16 +32,16 @@ class NGramFeatureExtractorInformed(NGramFeatureExtractor):
             DataFrame with n-gram counts per track.
         """
         self._extract_ngrams_all_orders(corpus["lyrics"])
-        # lemmatize all ngrams
-        tfidf_by_order = self._calculate_tfidf_all_orders(corpus)
+        self._apply_boundary_stripping_all_orders()
+
         artist_counts_by_order = self._count_artists_all_orders(corpus)
+        tfidf_by_order = self._calculate_tfidf_all_orders(corpus)
 
         filtered_tfidf = self._filter_and_rank_all_orders(
             tfidf_by_order, artist_counts_by_order
         )
 
         selected_ngrams = self._select_top_ngrams(filtered_tfidf)
-        selected_ngrams = self.stopword_filter.filter_ngrams(selected_ngrams)
         self.final_ngrams = (
             sorted(selected_ngrams)
             if isinstance(selected_ngrams, set)
@@ -54,6 +56,35 @@ class NGramFeatureExtractorInformed(NGramFeatureExtractor):
             self.vectorizers[name] = vec
             self.matrices[name] = mat
             self.features[name] = feats
+
+    def _apply_boundary_stripping_all_orders(self) -> None:
+        """Drop ngrams where boundary stripping changes the ngram."""
+        for name in ["bigrams", "trigrams"]:
+            original_features = self.features[name]
+            original_matrix = self.matrices[name]
+
+            kept_indices = []
+            for i, ngram in enumerate(original_features):
+                tokens = ngram.split()
+                stripped_tokens = self._strip_tokens(tokens)
+                if stripped_tokens == tokens:
+                    kept_indices.append(i)
+
+            self.features[name] = original_features[kept_indices]
+            self.matrices[name] = original_matrix[:, kept_indices]
+
+            dropped = len(original_features) - len(kept_indices)
+            print(
+                f"Boundary stripping {name}: kept {len(kept_indices):,} / {len(original_features):,} (dropped {dropped:,})"
+            )
+
+    def _strip_tokens(self, tokens: list[str]) -> list[str]:
+        """Strip boundary words from token list."""
+        if tokens and tokens[0] in self.boundary_stripper.boundary_words:
+            tokens = tokens[1:]
+        if tokens and tokens[-1] in self.boundary_stripper.boundary_words:
+            tokens = tokens[:-1]
+        return tokens
 
     def _extract_ngrams(
         self, texts: pd.Series, n_min: int, n_max: int, name: str

@@ -4,16 +4,18 @@ STOPWORDS_ENGLISH = set(nltk_stopwords.words("english"))
 STOPWORDS_ENGLISH.update(
     [
         "can't",
-        "cause",
         "could",
         "could've",
         "got",
-        "gotta",
-        "gonna",
         "must",
-        "em",
         "us",
-        "bout",
+        "that's",
+        "there's",
+        # "cause",
+        # "bout",
+        # "em",
+        # "gonna",
+        # "gotta",
         # "wanna",
         # "want"
     ]

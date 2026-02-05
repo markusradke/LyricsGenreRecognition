@@ -128,4 +128,4 @@ class CorpusLemmatizer:
             raise ValueError(
                 "Lemmatized corpus is not available. Please run lemmatize() first."
             )
-        self.lemmatized_corpus.to_csv(path, index=False)
+        self.lemmatized_corpus.to_csv(path, index=True)
