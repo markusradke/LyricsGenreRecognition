@@ -59,7 +59,6 @@ class GenreClassifierTrainer:
                     LogisticRegression(
                         C=params["C"],
                         l1_ratio=params["l1_ratio"],
-                        penalty="elasticnet",
                         solver="saga",
                         max_iter=1000,
                         random_state=self.random_state,

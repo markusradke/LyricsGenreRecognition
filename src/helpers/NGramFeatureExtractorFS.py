@@ -50,7 +50,7 @@ class NGramFeatureExtractorFS(NGramFeatureExtractor):
         matrix = vectorizer.fit_transform(texts)
         features = vectorizer.get_feature_names_out()
 
-        print(f"✓ Extracted {name}:")
+        print(f"Extracted {name}:")
         print(f"  - Unique: {len(features):,}")
         print(f"  - Shape: {matrix.shape}")
         print(f"  - Examples: {self._sample_features(features)}")

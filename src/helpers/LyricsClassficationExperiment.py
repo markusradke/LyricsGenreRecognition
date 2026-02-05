@@ -183,7 +183,6 @@ class LyricsClassificationExperiment:
             n_initial=n_initial,
             n_iterations=n_iterations,
             cv=cv,
-            n_jobs=n_jobs,
             checkpoint_dir=checkpoint_dir,
             parsimony_param="C",
         )
@@ -209,6 +208,7 @@ class LyricsClassificationExperiment:
     def save_experiment(self):
         with open(self.output_dir + "/complete_experiment.pkl", "wb") as f:
             pickle.dump(self, f)
+        print(f"Experiment saved to {self.output_dir}/complete_experiment.pkl")
 
     def show_train_test_genrefreq_comparison(self):
         plot_comparison_genre_distributions(

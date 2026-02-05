@@ -112,7 +112,7 @@ class NGramFeatureExtractorInformed(NGramFeatureExtractor):
         matrix = matrix[:, filtered_indices]
         features = features[filtered_indices]
 
-        print(f"✓ Extracted {name}:")
+        print(f"Extracted {name}:")
         print(f"  - Unique: {len(features):,}")
         print(f"  - Shape: {matrix.shape}")
         print(f"  - Examples: {self._sample_features(features)}")
@@ -183,29 +183,3 @@ class NGramFeatureExtractorInformed(NGramFeatureExtractor):
             raise ValueError("Must call fit() before transform()")
 
         return self._count_final_ngrams(lyrics, self.final_ngrams)
-
-
-if __name__ == "__main__":
-    from helpers.NGramFeatureExtractorFS import NGramFeatureExtractorFS
-
-    data = pd.DataFrame(
-        {
-            "lyrics": ["Hello world\nThis is a test", "Another song\nWith some lyrics"],
-            "genre": ["Pop", "Rock"],
-            "artist": ["Artist1", "Artist2"],
-        }
-    )
-    extractor_FS = NGramFeatureExtractorInformed(
-        min_artists=1, top_n=200, random_state=42
-    )
-    features_FS = extractor_FS.fit(data)
-    extractor_informed = NGramFeatureExtractorFS(
-        min_artists=1, top_n=200, random_state=42
-    )
-    features_informed = extractor_informed.fit(data)
-    print("=" * 60)
-    print(f"{len(features_FS.columns)} features extracted using Informed method.")
-    print(features_FS.columns.to_list())
-    print("=" * 60)
-    print(f"{len(features_informed.columns)} features extracted using FS method:")
-    print(features_informed.columns.tolist())

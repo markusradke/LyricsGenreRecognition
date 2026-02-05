@@ -94,7 +94,7 @@ class NGramFeatureExtractor:
                 )
 
         genre_tfidf_df = pd.DataFrame(results)
-        print(f"✓ Calculated TF-IDF for {len(genre_tfidf_df):,} genre-ngram pairs")
+        print(f"Calculated TF-IDF for {len(genre_tfidf_df):,} genre-ngram pairs")
         return genre_tfidf_df
 
     def _count_artists_all_orders(
@@ -132,7 +132,7 @@ class NGramFeatureExtractor:
             if ngram_idx in milestones:
                 print(f"  {milestones[ngram_idx]}% complete")
 
-        print(f"✓ Calculated artist diversity for {len(artist_count):,} n-grams")
+        print(f"Calculated artist diversity for {len(artist_count):,} n-grams")
 
         return artist_count
 

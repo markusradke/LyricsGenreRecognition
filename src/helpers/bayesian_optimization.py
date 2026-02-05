@@ -322,7 +322,7 @@ class BayesianOptimizer:
                 {"params": params, "score_mean": mean_score, "score_se": std_error}
             )
             print(f"Initial evaluation {idx}/{self.n_initial}")
-            print(f"Score: {mean_score:.4f} ± {std_error:.4f}")
+            print(f"Score: {mean_score:.4f} +- {std_error:.4f} (std. err.)")
             print("-" * 60)
 
         if self.checkpoint_dir:
@@ -351,7 +351,7 @@ class BayesianOptimizer:
                 {"params": next_params, "score_mean": mean_score, "score_se": std_error}
             )
 
-            print(f"Score: {mean_score:.4f} ± {std_error:.4f}")
+            print(f"Score: {mean_score:.4f} +- {std_error:.4f} (std. err.)")
             print("-" * 60)
 
             if self.checkpoint_dir:
