@@ -4,7 +4,7 @@ from helpers.LyricsClassficationExperiment import LyricsClassificationExperiment
 
 MIN_ARTISTS = 50  # minimum number of artists required to include an ngram
 TOP_N = 100  # number of top unigrams, bigrams, and trigrams to keep per genre
-GRANULARITIES = [5]  # , 12, 25, 32]  # n-gram granularities to process
+GRANULARITIES = [5, 12, 25, 32]  # n-gram granularities to process
 PARAM_SPACE = {
     "C": [np.log10(0.001), np.log10(100.0)],
     "l1_ratio": [0.0, 1.0],
@@ -29,7 +29,6 @@ def run_experiment(corpus, granularity):
         output_dir=f"models/cat{granularity}_informed_ngram_experiment",
         test_size=0.2,
         random_state=42,
-        subsample_debug=0.005,
     )
     exp.compute_informed_ngram_features(min_artists=MIN_ARTISTS, top_n=TOP_N)
     exp.tune_and_train_logistic_regression(

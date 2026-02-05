@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 from sklearn.feature_extraction.text import CountVectorizer
-from scipy.sparse import csr_matrix, vstack
+from scipy.sparse import csr_matrix
 
 from helpers.BoundaryStripper import BoundaryStripper
 from helpers.NGramFeatureExctractor import NGramFeatureExtractor
@@ -95,7 +95,7 @@ class NGramFeatureExtractorInformed(NGramFeatureExtractor):
             token_pattern=r"\b[\w']+\b",
             lowercase=True,
         )
-
+        print(f"Extracting {name} from lines and removing only stopword ngrams...")
         all_lines, doc_indices = self._split_texts_into_lines(texts)
         line_matrix = vectorizer.fit_transform(all_lines)
 
@@ -136,13 +136,13 @@ class NGramFeatureExtractorInformed(NGramFeatureExtractor):
         n_docs: int,
     ) -> csr_matrix:
         """Aggregate line-level counts back to document level."""
-        doc_matrices = []
-        for doc_idx in range(n_docs):
-            line_mask = [i for i, idx in enumerate(doc_indices) if idx == doc_idx]
-            if line_mask:
-                doc_matrix = line_matrix[line_mask].sum(axis=0)
-                doc_matrices.append(csr_matrix(doc_matrix))
-        return vstack(doc_matrices)
+        n_lines = len(doc_indices)
+        indicator = csr_matrix(
+            ([1] * n_lines, (doc_indices, list(range(n_lines)))),
+            shape=(n_docs, n_lines),
+            dtype=line_matrix.dtype,
+        )
+        return indicator @ line_matrix
 
     def _filter_stopword_features(self, features: np.ndarray) -> np.ndarray:
         """Remove stopword-only n-grams from features."""
