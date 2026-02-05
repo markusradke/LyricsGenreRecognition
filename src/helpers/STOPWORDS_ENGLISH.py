@@ -1,7 +1,5 @@
-from nltk import download
 from nltk.corpus import stopwords as nltk_stopwords
 
-download("stopwords")
 STOPWORDS_ENGLISH = set(nltk_stopwords.words("english"))
 STOPWORDS_ENGLISH.update(
     [
@@ -15,6 +13,7 @@ STOPWORDS_ENGLISH.update(
         "must",
         "em",
         "us",
+        "bout",
         # "wanna",
         # "want"
     ]

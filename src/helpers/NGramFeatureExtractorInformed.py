@@ -30,6 +30,7 @@ class NGramFeatureExtractorInformed(NGramFeatureExtractor):
             DataFrame with n-gram counts per track.
         """
         self._extract_ngrams_all_orders(corpus["lyrics"])
+        # lemmatize all ngrams
         tfidf_by_order = self._calculate_tfidf_all_orders(corpus)
         artist_counts_by_order = self._count_artists_all_orders(corpus)
 

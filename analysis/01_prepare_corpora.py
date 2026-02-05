@@ -1,5 +1,6 @@
 import pandas as pd
 from helpers.generate_report import generate_report
+from helpers.CorpusLemmatizer import CorpusLemmatizer
 
 print("READ IN FULL CORPUS CSV FILE...")
 corpus = pd.read_csv(
@@ -23,6 +24,14 @@ english = corpus[
     & (corpus["cat12"] != "schlager")  # German Genre
 ]
 english.to_csv("data/poptrag_lyrics_genres_corpus_filtered_english.csv", index=True)
+
+
+english_lemmatizer = CorpusLemmatizer(english, lyrics_column="full_lyrics")
+english_lemmatizer.lemmatize()
+english_lemmatizer.save_lemmatized(
+    "data/poptrag_lyrics_genres_corpus_filtered_english_lemmatized.csv", index=True
+)
+
 
 print("GENERATE REPORT...")
 generate_report(
