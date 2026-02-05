@@ -5,10 +5,20 @@ from sklearn.feature_extraction.text import CountVectorizer
 from scipy.sparse import csr_matrix, vstack
 
 from helpers.NGramFeatureExctractor import NGramFeatureExtractor
+from helpers.StopwordFilter import StopwordFilter
 
 
 class NGramFeatureExtractorInformed(NGramFeatureExtractor):
-    """Extract and rank n-grams from lyrics by genre according to a more informed method."""
+    """Extract and rank n-grams from lyrics by genre."""
+
+    def __init__(
+        self,
+        min_artists: int = 50,
+        top_n: int = 100,
+        random_state: int = 42,
+    ):
+        super().__init__(min_artists, top_n, random_state)
+        self.stopword_filter = StopwordFilter()
 
     def fit(self, corpus: pd.DataFrame) -> pd.DataFrame:
         """Extract and select n-gram features from corpus.
@@ -28,6 +38,7 @@ class NGramFeatureExtractorInformed(NGramFeatureExtractor):
         )
 
         selected_ngrams = self._select_top_ngrams(filtered_tfidf)
+        selected_ngrams = self.stopword_filter.filter_ngrams(selected_ngrams)
         self.final_ngrams = (
             sorted(selected_ngrams)
             if isinstance(selected_ngrams, set)
@@ -36,7 +47,7 @@ class NGramFeatureExtractorInformed(NGramFeatureExtractor):
         return self._count_final_ngrams(corpus["lyrics"], self.final_ngrams)
 
     def _extract_ngrams_all_orders(self, texts: pd.Series) -> None:
-        """Fit vectorizers and extract n-grams for orders 1, 2, 3."""
+        """Fit vectorizers and extract n-grams for orders 1-3."""
         for order, name in [(1, "unigrams"), (2, "bigrams"), (3, "trigrams")]:
             vec, mat, feats = self._extract_ngrams(texts, order, order, name)
             self.vectorizers[name] = vec
@@ -46,31 +57,28 @@ class NGramFeatureExtractorInformed(NGramFeatureExtractor):
     def _extract_ngrams(
         self, texts: pd.Series, n_min: int, n_max: int, name: str
     ) -> tuple[CountVectorizer, csr_matrix, np.ndarray]:
-        """Extract n-grams using CountVectorizer, only within single lines."""
+        """Extract n-grams within single lines only."""
         vectorizer = CountVectorizer(
             ngram_range=(n_min, n_max),
             token_pattern=r"\b[\w']+\b",
             lowercase=True,
         )
 
-        all_lines = []
-        doc_indices = []
-        for doc_idx, text in enumerate(texts):
-            lines = text.split("\n")
-            all_lines.extend(lines)
-            doc_indices.extend([doc_idx] * len(lines))
-
+        all_lines, doc_indices = self._split_texts_into_lines(texts)
         line_matrix = vectorizer.fit_transform(all_lines)
 
-        doc_matrices = []
-        for doc_idx in range(len(texts)):
-            line_mask = [i for i, idx in enumerate(doc_indices) if idx == doc_idx]
-            if line_mask:
-                doc_matrix = line_matrix[line_mask].sum(axis=0)
-                doc_matrices.append(csr_matrix(doc_matrix))
-
-        matrix = vstack(doc_matrices)
+        matrix = self._aggregate_lines_to_docs(line_matrix, doc_indices, len(texts))
         features = vectorizer.get_feature_names_out()
+
+        filtered_indices = np.array(
+            [
+                i
+                for i, f in enumerate(features)
+                if not self.stopword_filter.is_stopword_only(f)
+            ]
+        )
+        matrix = matrix[:, filtered_indices]
+        features = features[filtered_indices]
 
         print(f"✓ Extracted {name}:")
         print(f"  - Unique: {len(features):,}")
@@ -79,33 +87,51 @@ class NGramFeatureExtractorInformed(NGramFeatureExtractor):
 
         return vectorizer, matrix, features
 
-    def _count_final_ngrams(
-        self, texts: pd.Series, selected_ngrams: list[str]
-    ) -> pd.DataFrame:
-        """Count selected n-grams in texts, only within single lines."""
-        vectorizer = CountVectorizer(
-            vocabulary=selected_ngrams,
-            token_pattern=r"\b[\w']+\b",
-            lowercase=True,
-        )
-
+    def _split_texts_into_lines(self, texts: pd.Series) -> tuple[list[str], list[int]]:
+        """Split texts into lines and track document indices."""
         all_lines = []
         doc_indices = []
         for doc_idx, text in enumerate(texts):
             lines = text.split("\n")
             all_lines.extend(lines)
             doc_indices.extend([doc_idx] * len(lines))
+        return all_lines, doc_indices
 
-        line_matrix = vectorizer.fit_transform(all_lines)
-
+    def _aggregate_lines_to_docs(
+        self,
+        line_matrix: csr_matrix,
+        doc_indices: list[int],
+        n_docs: int,
+    ) -> csr_matrix:
+        """Aggregate line-level counts back to document level."""
         doc_matrices = []
-        for doc_idx in range(len(texts)):
+        for doc_idx in range(n_docs):
             line_mask = [i for i, idx in enumerate(doc_indices) if idx == doc_idx]
             if line_mask:
                 doc_matrix = line_matrix[line_mask].sum(axis=0)
                 doc_matrices.append(csr_matrix(doc_matrix))
+        return vstack(doc_matrices)
 
-        matrix = vstack(doc_matrices)
+    def _filter_stopword_features(self, features: np.ndarray) -> np.ndarray:
+        """Remove stopword-only n-grams from features."""
+        filtered = [f for f in features if not self.stopword_filter.is_stopword_only(f)]
+        return np.array(filtered)
+
+    def _count_final_ngrams(
+        self,
+        texts: pd.Series,
+        selected_ngrams: list[str],
+    ) -> pd.DataFrame:
+        """Count selected n-grams within single lines."""
+        vectorizer = CountVectorizer(
+            vocabulary=selected_ngrams,
+            token_pattern=r"\b[\w']+\b",
+            lowercase=True,
+        )
+
+        all_lines, doc_indices = self._split_texts_into_lines(texts)
+        line_matrix = vectorizer.fit_transform(all_lines)
+        matrix = self._aggregate_lines_to_docs(line_matrix, doc_indices, len(texts))
 
         return pd.DataFrame(matrix.toarray(), columns=selected_ngrams)
 
