@@ -33,6 +33,9 @@ class CollocationsExtractor:
         self.selected_bigrams = []
         self.selected_trigrams = []
         self.vocabulary = []
+        self._tokens_by_doc = []
+        self._trigram_tuples = {}
+        self._bigram_tuples = {}
 
     def fit(self, corpus: pd.DataFrame) -> "CollocationsExtractor":
         """Fit extractor on corpus: extract, filter, score, and rank n-grams.
@@ -43,12 +46,15 @@ class CollocationsExtractor:
         Returns:
             Self for method chaining.
         """
+        self._tokens_by_doc = [self._tokenize(text) for text in corpus["lyrics"]]
+
         print("Extracting bigrams and trigrams...")
-        bigrams, trigrams = self._extract_ngrams(corpus["lyrics"])
+        bigrams, trigrams = self._extract_ngrams_from_tokens(self._tokens_by_doc)
 
         print("Filtering by artist diversity and stopwords...")
-        bigrams = self._filter_ngrams(bigrams, corpus)
-        trigrams = self._filter_ngrams(trigrams, corpus)
+        artists = corpus["artist"].values
+        bigrams = self._filter_ngrams(bigrams, artists, self._tokens_by_doc)
+        trigrams = self._filter_ngrams(trigrams, artists, self._tokens_by_doc)
 
         print("Scoring bigrams with LLR...")
         bigram_scores = self._score_ngrams(bigrams, corpus, order=2)
@@ -60,12 +66,19 @@ class CollocationsExtractor:
         self.selected_bigrams = self._select_top_k(bigram_scores, self.top_bigrams)
         self.selected_trigrams = self._select_top_k(trigram_scores, self.top_trigrams)
 
+        self._trigram_tuples = {
+            tuple(ng.split("_")): ng for ng in self.selected_trigrams
+        }
+        self._bigram_tuples = {tuple(ng.split("_")): ng for ng in self.selected_bigrams}
+
         print(
             f"Selected {len(self.selected_bigrams)} bigrams and {len(self.selected_trigrams)} trigrams"
         )
 
         print("Replacing n-grams in corpus...")
-        replaced_texts = self._replace_ngrams_in_corpus(corpus["lyrics"])
+        replaced_texts = self._replace_ngrams_in_corpus(
+            tokens_by_doc=self._tokens_by_doc
+        )
 
         print("Building vocabulary from replaced corpus...")
         self.vocabulary = self._build_vocabulary(replaced_texts, corpus)
@@ -73,13 +86,13 @@ class CollocationsExtractor:
         print(f"Final vocabulary size: {len(self.vocabulary)}")
         return self
 
-    def _extract_ngrams(
-        self, texts: pd.Series
+    def _extract_ngrams_from_tokens(
+        self, tokens_by_doc: list[list[str]]
     ) -> tuple[list[tuple[str, ...]], list[tuple[str, ...]]]:
-        """Extract all bigrams and trigrams from texts.
+        """Extract all bigrams and trigrams from tokens.
 
         Args:
-            texts: Series of lyrics.
+            tokens_by_doc: Token lists per document.
 
         Returns:
             Tuple of (bigrams, trigrams) as lists of tuples.
@@ -87,8 +100,7 @@ class CollocationsExtractor:
         all_bigrams = []
         all_trigrams = []
 
-        for text in texts:
-            tokens = self._tokenize(text)
+        for tokens in tokens_by_doc:
             finder_bi = BigramCollocationFinder.from_words(tokens)
             finder_tri = TrigramCollocationFinder.from_words(tokens)
 
@@ -112,22 +124,26 @@ class CollocationsExtractor:
         return [word.lower() for word in text.split() if word.isalpha()]
 
     def _filter_ngrams(
-        self, ngrams: list[tuple[str, ...]], corpus: pd.DataFrame
+        self,
+        ngrams: list[tuple[str, ...]],
+        artists: list[str],
+        tokens_by_doc: list[list[str]],
     ) -> list[tuple[str, ...]]:
         """Filter n-grams by artist diversity and stopwords.
 
         Args:
             ngrams: List of n-gram tuples.
-            corpus: DataFrame with "lyrics" and "artist" columns.
+            artists: Artist labels per document.
+            tokens_by_doc: Token lists per document.
 
         Returns:
             Filtered list of n-gram tuples.
         """
-        artist_counts = self._count_artists_per_ngram(ngrams, corpus)
+        artist_counts = self._count_artists_per_ngram(ngrams, artists, tokens_by_doc)
         filtered = [
             ng
             for ng in ngrams
-            if artist_counts[ng] >= self.min_artists
+            if artist_counts.get(ng, 0) >= self.min_artists
             and not self.stopword_filter.is_stopword_only(" ".join(ng))
         ]
         print(
@@ -136,37 +152,37 @@ class CollocationsExtractor:
         return filtered
 
     def _count_artists_per_ngram(
-        self, ngrams: list[tuple[str, ...]], corpus: pd.DataFrame
+        self,
+        ngrams: list[tuple[str, ...]],
+        artists: list[str],
+        tokens_by_doc: list[list[str]],
     ) -> dict[tuple[str, ...], int]:
         """Count unique artists per n-gram.
 
         Args:
             ngrams: List of n-gram tuples.
-            corpus: DataFrame with "lyrics" and "artist" columns.
+            artists: Artist labels per document.
+            tokens_by_doc: Token lists per document.
 
         Returns:
             Dict mapping n-gram to unique artist count.
         """
+        if not ngrams:
+            return {}
+
         ngram_artists = defaultdict(set)
+        n_len = len(ngrams[0])
+        ngram_set = set(ngrams)
 
-        for idx, (text, artist) in enumerate(
-            corpus[["lyrics", "artist"]].itertuples(index=False)
-        ):
-            tokens = self._tokenize(text)
-            text_ngrams = (
-                set(
-                    tuple(tokens[i : i + len(ngrams[0])])
-                    for i in range(len(tokens) - len(ngrams[0]) + 1)
-                )
-                if ngrams
-                else set()
+        for tokens, artist in zip(tokens_by_doc, artists):
+            text_ngrams = set(
+                tuple(tokens[i : i + n_len]) for i in range(len(tokens) - n_len + 1)
             )
-
-            for ng in ngrams:
-                if ng in text_ngrams:
+            for ng in text_ngrams:
+                if ng in ngram_set:
                     ngram_artists[ng].add(artist)
 
-        return {ng: len(artists) for ng, artists in ngram_artists.items()}
+        return {ng: len(artist_set) for ng, artist_set in ngram_artists.items()}
 
     def _score_ngrams(
         self, ngrams: list[tuple[str, ...]], corpus: pd.DataFrame, order: int
@@ -238,23 +254,35 @@ class CollocationsExtractor:
         top_ngrams = scores_df.head(k)["ngram"].tolist()
         return ["_".join(ng) for ng in top_ngrams]
 
-    def _replace_ngrams_in_corpus(self, texts: pd.Series) -> list[list[str]]:
+    def _replace_ngrams_in_corpus(
+        self,
+        texts: pd.Series | None = None,
+        tokens_by_doc: list[list[str]] | None = None,
+    ) -> list[list[str]]:
         """Replace n-grams in corpus using greedy longest-first matching.
 
         Args:
             texts: Series of lyrics.
+            tokens_by_doc: Token lists per document.
 
         Returns:
             List of token lists (one per text) with n-grams replaced.
         """
-        trigram_tuples = {tuple(ng.split("_")): ng for ng in self.selected_trigrams}
-        bigram_tuples = {tuple(ng.split("_")): ng for ng in self.selected_bigrams}
+        if not self._trigram_tuples or not self._bigram_tuples:
+            self._trigram_tuples = {
+                tuple(ng.split("_")): ng for ng in self.selected_trigrams
+            }
+            self._bigram_tuples = {
+                tuple(ng.split("_")): ng for ng in self.selected_bigrams
+            }
+
+        if tokens_by_doc is None:
+            tokens_by_doc = [self._tokenize(text) for text in texts]
 
         replaced_corpus = []
-        for text in texts:
-            tokens = self._tokenize(text)
+        for tokens in tokens_by_doc:
             replaced_tokens = self._replace_ngrams_in_tokens(
-                tokens, trigram_tuples, bigram_tuples
+                tokens, self._trigram_tuples, self._bigram_tuples
             )
             replaced_corpus.append(replaced_tokens)
 
@@ -353,33 +381,3 @@ class CollocationsExtractor:
         ]
 
         return filtered_texts
-
-
-if __name__ == "__main__":
-    import pandas as pd
-
-    full = pd.read_csv(
-        "data/poptrag_lyrics_genres_corpus_filtered_english_lemmatized.csv"
-    )
-    full.rename(
-        columns={
-            "lyrics_lemmatized": "lyrics",
-            "track.s.firstartist.name": "artist",
-            "cat5": "genre",
-        },
-        inplace=True,
-    )
-    test = full.sample(n=1000, random_state=42).reset_index(drop=True)[
-        ["lyrics", "artist", "genre"]
-    ]
-
-    extractor = CollocationsExtractor(min_artists=10)
-    extractor.fit(test)
-
-    print(f"\nVocabulary size: {len(extractor.vocabulary)}")
-    print(f"Sample vocabulary: {extractor.vocabulary[:10]}")
-
-    transformed = extractor.transform(test["lyrics"].head(5))
-    print("\nSample transformed text (first 3):")
-    for i, tokens in enumerate(transformed[:3]):
-        print(f"  {i+1}: {' '.join(tokens[:20])}...")
