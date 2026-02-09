@@ -22,6 +22,7 @@ executing==2.2.1
 fastjsonschema==2.21.2
 fonttools==4.61.1
 fqdn==1.5.1
+gensim==4.3.3
 h11==0.16.0
 -e .
 httpcore==1.0.9

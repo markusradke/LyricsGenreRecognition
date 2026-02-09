@@ -14,6 +14,7 @@ from helpers.split_group_stratified_and_join import (
 from helpers.LyricsClassificationMetrics import LyricsClassificationMetrics
 from helpers.NGramFeatureExtractorFS import NGramFeatureExtractorFS
 from helpers.NGramFeatureExtractorInformed import NGramFeatureExtractorInformed
+from helpers.LDAFeatureExtractor import LDAFeatureExtractor
 from helpers.GenreClassifierTrainer import GenreClassifierTrainer
 
 
@@ -147,6 +148,28 @@ class LyricsClassificationExperiment:
         self.feature_type = (
             f"Informed N-grams (top {top_n}, min. {min_artists} artists)"
         )
+
+    def compute_lda_features(
+        self,
+        range_of_topics=(2, 50),
+        topics_step=2,
+        min_artists=50,
+        top_bigrams=1000,
+        top_trigrams=1000,
+        random_state=42,
+    ):
+        lda_extractor = LDAFeatureExtractor(
+            range_of_topics,
+            topics_step,
+            min_artists,
+            top_bigrams,
+            top_trigrams,
+            random_state,
+        )
+        lda_extractor.fit(self.corpus_train)
+        self.X_train = lda_extractor.transform(self.corpus_train)
+        self.X_test = lda_extractor.transform(self.corpus_test)
+        self.feature_type = f"LDA Topic probabilities (topics {range_of_topics[0]}-{range_of_topics[1]} step {topics_step}, min. {min_artists} artists, top {top_bigrams} bigrams, top {top_trigrams} trigrams)"
 
     def _ensure_features(self):
         if self.X_train is None:
