@@ -12,8 +12,8 @@ from helpers.split_group_stratified_and_join import (
     plot_comparison_genre_distributions,
 )
 from helpers.LyricsClassificationMetrics import LyricsClassificationMetrics
-from helpers.NGramFeatureExtractorFS import NGramFeatureExtractorFS
-from helpers.NGramFeatureExtractorInformed import NGramFeatureExtractorInformed
+from helpers.NGramFeatureExctractorFS import NGramFeatureExtractorFS
+from helpers.IdiomExtractor import IdiomExtractor
 from helpers.LDAFeatureExtractor import LDAFeatureExtractor
 from helpers.GenreClassifierTrainer import GenreClassifierTrainer
 
@@ -125,29 +125,27 @@ class LyricsClassificationExperiment:
         y_pred = pd.Series(sampled, index=y_test.index, name="pred")
         return LyricsClassificationMetrics(y_test, y_pred)
 
-    def compute_fs_ngram_features(self, min_artists=50, top_n=100):
+    def compute_fs_ngram_features(self, min_artists=50, top_n_per_genre_and_ngram=100):
         ngram_extractor = NGramFeatureExtractorFS(
             min_artists=min_artists,
-            top_n=top_n,
+            top_n=top_n_per_genre_and_ngram,
             random_state=self.random_state,
         )
         self.X_train = ngram_extractor.fit(self.corpus_train)
         self.X_test = ngram_extractor.transform(self.corpus_test["lyrics"])
-        self.feature_type = (
-            f"Fell-Spohrleder (2014) N-grams (top {top_n}, min. {min_artists} artists)"
-        )
+        self.feature_type = f"Fell-Spohrleder (2014) N-grams (top {top_n_per_genre_and_ngram} (per genre and ngram type), min. {min_artists} artists)"
 
-    def compute_informed_ngram_features(self, min_artists=50, top_n=100):
-        ngram_extractor = NGramFeatureExtractorInformed(
+    def compute_informed_ngram_features(
+        self, min_artists=50, llr_threshold=10, top_n_per_genre=300
+    ):
+        ngram_extractor = IdiomExtractor(
             min_artists=min_artists,
-            top_n=top_n,
-            random_state=self.random_state,
+            llr_treshold=llr_threshold,
+            top_vocab_per_genre=top_n_per_genre,
         )
         self.X_train = ngram_extractor.fit(self.corpus_train)
-        self.X_test = ngram_extractor.transform(self.corpus_test["lyrics"])
-        self.feature_type = (
-            f"Informed N-grams (top {top_n}, min. {min_artists} artists)"
-        )
+        self.X_test = ngram_extractor.transform(self.corpus_test)
+        self.feature_type = f"Informed N-grams (top {top_n_per_genre} per genre, min. {min_artists} artists)"
 
     def compute_lda_features(
         self,
@@ -169,6 +167,7 @@ class LyricsClassificationExperiment:
         lda_extractor.fit(self.corpus_train)
         self.X_train = lda_extractor.transform(self.corpus_train)
         self.X_test = lda_extractor.transform(self.corpus_test)
+        self.lda_extractor = lda_extractor
         self.feature_type = f"LDA Topic probabilities (topics {range_of_topics[0]}-{range_of_topics[1]} step {topics_step}, min. {min_artists} artists, top {top_bigrams} bigrams, top {top_trigrams} trigrams)"
 
     def _ensure_features(self):

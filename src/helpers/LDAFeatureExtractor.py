@@ -6,11 +6,11 @@ import pandas as pd
 from gensim.corpora import Dictionary
 from gensim.models import CoherenceModel, LdaModel
 
-from helpers.CollocationsExtractor import CollocationsExtractor
+from helpers.IdiomExtractor import IdiomExtractor
 
 
 class LDAFeatureExtractor:
-    """Unsupervised LDA topic modeling over collocation-aware tokens."""
+    """Unsupervised LDA topic modeling over collocation-aware tokens. Aggregate Artist texts for building the lda model, but transform each song separately to get song-level topic distributions."""
 
     def __init__(
         self,
@@ -26,7 +26,7 @@ class LDAFeatureExtractor:
         self.model: LdaModel | None = None
         self.dictionary: Dictionary | None = None
         self.coherence_scores: dict[int, float] = {}
-        self.collocations_extractor: CollocationsExtractor | None = None
+        self.collocations_extractor: IdiomExtractor | None = None
         self.min_artists = min_artists
         self.top_bigrams = top_bigrams
         self.top_trigrams = top_trigrams
@@ -41,14 +41,14 @@ class LDAFeatureExtractor:
         Returns:
             Self for method chaining.
         """
-        self.collocations_extractor = CollocationsExtractor(
+        self.collocations_extractor = IdiomExtractor(
             min_artists=self.min_artists,
             top_bigrams=self.top_bigrams,
             top_trigrams=self.top_trigrams,
             random_state=self.random_state,
         )
         self.collocations_extractor.fit(corpus)
-        tokens = self.collocations_extractor.transform(corpus["lyrics"])
+        tokens = self.collocations_extractor.transform(corpus, aggregate_artists=True)
 
         self.dictionary = Dictionary(tokens)
         corpus_bow = [self.dictionary.doc2bow(doc) for doc in tokens]
@@ -105,7 +105,7 @@ class LDAFeatureExtractor:
         if self.collocations_extractor is None:
             raise ValueError("Model has not been fitted yet.")
 
-        tokens = self.collocations_extractor.transform(corpus["lyrics"])
+        tokens = self.collocations_extractor.transform(corpus, aggregate_artists=False)
         corpus_bow = [self.dictionary.doc2bow(doc) for doc in tokens]
 
         res = [
