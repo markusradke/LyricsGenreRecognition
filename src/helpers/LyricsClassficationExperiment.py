@@ -3,7 +3,7 @@ import numpy as np
 import pickle
 
 from pandas import DataFrame, Series
-from typing import Dict
+from typing import Dict, Tuple
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report  # for the time being
 
@@ -14,7 +14,7 @@ from helpers.split_group_stratified_and_join import (
 from helpers.LyricsClassificationMetrics import LyricsClassificationMetrics
 from helpers.NGramFeatureExctractorFS import NGramFeatureExtractorFS
 from helpers.IdiomExtractor import IdiomExtractor
-from helpers.LDAFeatureExtractor import LDAFeatureExtractor
+from helpers.TopicFeatureExtractor import TopicFeatureExtractor
 from helpers.GenreClassifierTrainer import GenreClassifierTrainer
 
 
@@ -24,6 +24,8 @@ class LyricsClassificationExperiment:
     test_size: float
     corpus_train: DataFrame
     corpus_test: DataFrame
+    corpus_train_replaced: DataFrame
+    corpus_test_replaced: DataFrame
     random_performance_baseline: LyricsClassificationMetrics
     X_train: DataFrame
     X_test: DataFrame
@@ -55,6 +57,10 @@ class LyricsClassificationExperiment:
         self.corpus_train, self.corpus_test = self._prepare_corpus(
             corpus, genrecol, lyricscol, artistcol
         )
+        self.corpus_train_replaced = (
+            self.corpus_train
+        )  # initilaize for direct topic modelling
+        self.corpus_test_replced = self.corpus_test
         self.granularity = self.corpus_train["genre"].nunique()
         self.random_performance_baseline = self._compute_random_baseline()
         self.X_train = None
@@ -132,43 +138,57 @@ class LyricsClassificationExperiment:
             random_state=self.random_state,
         )
         self.X_train = ngram_extractor.fit(self.corpus_train)
+        self.ngram_extractor = ngram_extractor
         self.X_test = ngram_extractor.transform(self.corpus_test["lyrics"])
         self.feature_type = f"Fell-Spohrleder (2014) N-grams (top {top_n_per_genre_and_ngram} (per genre and ngram type), min. {min_artists} artists)"
 
-    def compute_informed_ngram_features(
-        self, min_artists=50, llr_threshold=10, top_n_per_genre=300
+    def compute_idiom_ngram_features(
+        self,
+        min_artists=50,
+        llr_threshold=10,
+        top_n_per_genre=300,
+        include_unigrams=False,
     ):
         ngram_extractor = IdiomExtractor(
             min_artists=min_artists,
             llr_treshold=llr_threshold,
             top_vocab_per_genre=top_n_per_genre,
+            include_unigrams=include_unigrams,
         )
-        self.X_train = ngram_extractor.fit(self.corpus_train)
-        self.X_test = ngram_extractor.transform(self.corpus_test)
+        self.X_train, self.corpus_train_replaced = ngram_extractor.fit_transform(
+            self.corpus_train
+        )
+        self.ngram_extractor = ngram_extractor
+        self.X_test, self.corpus_test_replaced = ngram_extractor.transform(
+            self.corpus_test
+        )
         self.feature_type = f"Informed N-grams (top {top_n_per_genre} per genre, min. {min_artists} artists)"
 
-    def compute_lda_features(
+    def compute_topics_features(
         self,
-        range_of_topics=(2, 50),
-        topics_step=2,
-        min_artists=50,
-        top_bigrams=1000,
-        top_trigrams=1000,
-        random_state=42,
+        n_topics=(2, 50, 5),
     ):
-        lda_extractor = LDAFeatureExtractor(
-            range_of_topics,
-            topics_step,
-            min_artists,
-            top_bigrams,
-            top_trigrams,
-            random_state,
+        """
+        Compute topic features from collocated features using Biterm Topic Modeling.
+        Args:
+            n_topics: Tuple of (min_topics, max_topics, step) for topic numbers.
+        """
+        topics_extractor = TopicFeatureExtractor(
+            num_topics=n_topics, random_state=self.random_state
         )
-        lda_extractor.fit(self.corpus_train)
-        self.X_train = lda_extractor.transform(self.corpus_train)
-        self.X_test = lda_extractor.transform(self.corpus_test)
-        self.lda_extractor = lda_extractor
-        self.feature_type = f"LDA Topic probabilities (topics {range_of_topics[0]}-{range_of_topics[1]} step {topics_step}, min. {min_artists} artists, top {top_bigrams} bigrams, top {top_trigrams} trigrams)"
+
+        self.X_train, self.topic_model = topics_extractor.fit_transform(
+            self.corpus_train_replaced
+        )
+        self.topics_extractor = topics_extractor
+        self.X_test = topics_extractor.transform(self.corpus_test_replaced)
+        # self.topic_score_train = topics_extractor.get_topic_score(
+        #     self.corpus_train_replaced
+        # )
+        # self.topic_score_test = topics_extractor.get_topic_score(
+        #     self.corpus_test_replaced
+        # )
+        self.feature_type = f"Topic probabilities (topics {n_topics[0]}-{n_topics[1]} step {n_topics[2]})"
 
     def _ensure_features(self):
         if self.X_train is None:

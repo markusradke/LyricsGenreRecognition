@@ -1,3 +1,4 @@
+from xml.etree.ElementInclude import include
 import pandas as pd
 import numpy as np
 
@@ -18,6 +19,7 @@ class IdiomExtractor:
         min_artists: int = 50,
         llr_treshold: int = 1000,
         top_vocab_per_genre: int = 300,
+        include_unigrams=False,
         random_state: int = 42,
     ):
         self.min_artists = min_artists
@@ -26,27 +28,55 @@ class IdiomExtractor:
         self.random_state = random_state
         self.stopword_filter = StopwordFilter()
         self.vocabulary = []
+        self.include_unigrams = include_unigrams
+        self.selected_ngrams = set()
         self._bigram_map = {}
         self._trigram_map = {}
 
-    def fit(self, corpus: pd.DataFrame) -> pd.DataFrame:
-        print("Step 1: Extracting and scoring n-grams per genre...")
-        selected_ngrams = self._extract_top_ngrams_per_genre(corpus)
+    def fit_transform(
+        self,
+        corpus: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Fit the extractor to a lyrics corpus: identify genre-specific n-grams, replace them
+        in the corpus, extract unigrams from the modified text, and build a final ranked
+        vocabulary via genre TF–IDF.
+        Args:
+            corpus (pd.DataFrame): Input dataframe containing at least a "lyrics" and a "genre" column.
+        Returns:
+          Tuple[pd.DataFrame, pd.DataFrame]: (ngram_counts, replaced_corpus)
+                - ngram_counts: DataFrame with counts of detected n-grams from corpus["lyrics"].
+                - replaced_corpus: Corpus DataFrame with matched n-grams replaced according to the fitted vocabulary.
+        Side effects:
+        - Sets self.selected_ngrams to the top n-grams found per genre (output of
+          _extract_top_ngrams_per_genre).
+        - Sets self.vocabulary to the final ranked token set (output of
+          _rank_tokens_via_tfidf).
 
-        print("\nStep 2: Replacing n-grams in corpus...")
-        replaced_corpus = self._replace_ngrams_in_corpus(corpus, selected_ngrams)
+        """
+        print("Extracting and scoring n-grams per genre...")
+        self._extract_top_ngrams_per_genre(corpus)
 
-        print("\nStep 3: Extracting unigrams from replaced corpus...")
-        unigrams = self._extract_unigrams(replaced_corpus, corpus)
+        print("\nReplacing n-grams in corpus...")
+        replaced_corpus = self._replace_ngrams_in_corpus(corpus)
 
-        print("\nStep 4: Ranking all tokens via TF-IDF...")
-        all_tokens = selected_ngrams | unigrams
+        if self.include_unigrams:
+            print("\nExtracting unigrams from replaced corpus...")
+            unigrams = self._extract_unigrams(replaced_corpus, corpus)
+            all_tokens = self.selected_ngrams | unigrams
+        else:
+            all_tokens = self.selected_ngrams
+
+        print("\nRanking all tokens via TF-IDF...")
         self.vocabulary = self._rank_tokens_via_tfidf(
             replaced_corpus, corpus, all_tokens
         )
-
         print(f"\nFinal vocabulary size: {len(self.vocabulary)}")
-        return self._count_ngrams_in_corpus(corpus["lyrics"])
+
+        dtm = self._count_ngrams_in_corpus(corpus["lyrics"])
+        replaced_corpus = self._tidy_replaced_corpus(replaced_corpus, corpus["genre"])
+
+        return dtm, replaced_corpus
 
     def _extract_top_ngrams_per_genre(self, corpus: pd.DataFrame) -> set[str]:
         tokens_by_doc = [self._tokenize(text) for text in corpus["lyrics"]]
@@ -78,11 +108,12 @@ class IdiomExtractor:
             selected.update(["_".join(ng) for ng in top_bi])
             selected.update(["_".join(ng) for ng in top_tri])
 
-        self._build_ngram_maps(selected)
+        self.selected_ngrams = selected
+        self._build_ngram_maps()
         print(
             f"Selected {len(top_bi)} bigrams and {len(top_tri)} trigrams across genres"
         )
-        return selected
+        return None
 
     def _extract_all_ngrams(
         self, tokens_by_doc: list[list[str]]
@@ -167,20 +198,18 @@ class IdiomExtractor:
 
         return pd.DataFrame(scores)
 
-    def _build_ngram_maps(self, selected_ngrams: set[str]) -> None:
+    def _build_ngram_maps(self) -> None:
         self._bigram_map = {}
         self._trigram_map = {}
 
-        for ng_str in selected_ngrams:
+        for ng_str in self.selected_ngrams:
             parts = ng_str.split("_")
             if len(parts) == 2:
                 self._bigram_map[tuple(parts)] = ng_str
             elif len(parts) == 3:
                 self._trigram_map[tuple(parts)] = ng_str
 
-    def _replace_ngrams_in_corpus(
-        self, corpus: pd.DataFrame, selected_ngrams: set[str]
-    ) -> list[list[str]]:
+    def _replace_ngrams_in_corpus(self, corpus: pd.DataFrame) -> list[list[str]]:
         replaced_corpus = []
         for text in corpus["lyrics"]:
             tokens = self._tokenize(text)
@@ -302,11 +331,34 @@ class IdiomExtractor:
     def _tokenize(self, text: str) -> list[str]:
         return [word.lower() for word in text.split() if word.isalpha()]
 
-    def transform(self, corpus: pd.DataFrame) -> pd.DataFrame:
+    def _tidy_replaced_corpus(self, replaced: list, genres=None) -> pd.DataFrame:
+        """Convert corpus to a DataFrame and remove all words / tokens that are not part of the fitted vocabulary."""
+        documents = list()
+        for document in replaced:
+            vocab_only = [token for token in document if token in self.vocabulary]
+            documents.append(" ".join(vocab_only))
+        tidied = pd.DataFrame(documents, columns=["lyrics"])
+        if genres is not None:
+            tidied["genre"] = genres
+        return tidied
+
+    def transform(self, corpus: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Transform the corpus by replacing known n-grams and computing n-gram counts.
+        Args:
+            corpus (pd.DataFrame): Input dataframe containing at least a "lyrics" column.
+        Returns:
+            Tuple[pd.DataFrame, pd.DataFrame]: (ngram_counts, replaced_corpus)
+                - ngram_counts: DataFrame with counts of detected n-grams from corpus["lyrics"].
+                - replaced_corpus: Corpus DataFrame with matched n-grams replaced according to the fitted vocabulary.
+        """
         if not self.vocabulary:
             raise ValueError("Must call fit() before transform()")
 
-        return self._count_ngrams_in_corpus(corpus["lyrics"])
+        replaced_corpus = self._replace_ngrams_in_corpus(corpus)
+        dtm = self._count_ngrams_in_corpus(corpus["lyrics"])
+        replaced_corpus = self._tidy_replaced_corpus(replaced_corpus)
+
+        return dtm, replaced_corpus
 
     def _count_ngrams_in_corpus(self, lyrics: pd.Series) -> pd.DataFrame:
         vocab_set = set(self.vocabulary)
@@ -348,7 +400,7 @@ if __name__ == "__main__":
         llr_treshold=10,
         top_vocab_per_genre=300,
     )
-    extractor.fit(english)
+    dtm, replaced = extractor.fit_transform(english)
 
     print(f"\nVocabulary for {english}:")
     print(extractor.vocabulary)
