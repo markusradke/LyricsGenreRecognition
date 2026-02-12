@@ -1,10 +1,17 @@
-from xml.etree.ElementInclude import include
 import pandas as pd
 import numpy as np
 
 from collections import defaultdict
-from nltk.collocations import BigramAssocMeasures, TrigramAssocMeasures
-from nltk.collocations import BigramCollocationFinder, TrigramCollocationFinder
+from nltk.collocations import (
+    BigramAssocMeasures,
+    TrigramAssocMeasures,
+    QuadgramAssocMeasures,
+)
+from nltk.collocations import (
+    BigramCollocationFinder,
+    TrigramCollocationFinder,
+    QuadgramCollocationFinder,
+)
 from scipy.sparse import csr_matrix
 from sklearn.feature_extraction.text import CountVectorizer
 
@@ -17,21 +24,22 @@ class IdiomExtractor:
     def __init__(
         self,
         min_artists: int = 50,
+        min_tracks: int = 100,
         llr_treshold: int = 1000,
         top_vocab_per_genre: int = 300,
-        include_unigrams=False,
         random_state: int = 42,
     ):
         self.min_artists = min_artists
+        self.min_tracks = min_tracks
         self.llr_treshold = llr_treshold
         self.top_vocab_per_genre = top_vocab_per_genre
         self.random_state = random_state
         self.stopword_filter = StopwordFilter()
         self.vocabulary = []
-        self.include_unigrams = include_unigrams
         self.selected_ngrams = set()
         self._bigram_map = {}
         self._trigram_map = {}
+        self._quadgram_map = {}
 
     def fit_transform(
         self,
@@ -55,21 +63,14 @@ class IdiomExtractor:
 
         """
         print("Extracting and scoring n-grams per genre...")
-        self._extract_top_ngrams_per_genre(corpus)
+        bi_ngrams, tri_ngrams, quad_ngrams = self._extract_top_ngrams_per_genre(corpus)
 
         print("\nReplacing n-grams in corpus...")
         replaced_corpus = self._replace_ngrams_in_corpus(corpus)
 
-        if self.include_unigrams:
-            print("\nExtracting unigrams from replaced corpus...")
-            unigrams = self._extract_unigrams(replaced_corpus, corpus)
-            all_tokens = self.selected_ngrams | unigrams
-        else:
-            all_tokens = self.selected_ngrams
-
-        print("\nRanking all tokens via TF-IDF...")
-        self.vocabulary = self._rank_tokens_via_tfidf(
-            replaced_corpus, corpus, all_tokens
+        print("\nRanking tokens via TF-IDF per n-gram type...")
+        self.vocabulary = self._rank_tokens_via_tfidf_per_type(
+            replaced_corpus, corpus, bi_ngrams, tri_ngrams, quad_ngrams
         )
         print(f"\nFinal vocabulary size: {len(self.vocabulary)}")
 
@@ -78,60 +79,109 @@ class IdiomExtractor:
 
         return dtm, replaced_corpus
 
-    def _extract_top_ngrams_per_genre(self, corpus: pd.DataFrame) -> set[str]:
+    def _extract_top_ngrams_per_genre(
+        self, corpus: pd.DataFrame
+    ) -> tuple[set[str], set[str], set[str]]:
         tokens_by_doc = [self._tokenize(text) for text in corpus["lyrics"]]
 
-        all_bigrams, all_trigrams = self._extract_all_ngrams(tokens_by_doc)
+        all_bigrams, all_trigrams, all_quadgrams = self._extract_all_ngrams(
+            tokens_by_doc
+        )
+
+        stripped_bi = self._strip_left_boundary(all_bigrams)
 
         filtered_bi = self._filter_ngrams(
-            all_bigrams, corpus["artist"].values, tokens_by_doc
+            stripped_bi, corpus["artist"].values, tokens_by_doc
         )
         filtered_tri = self._filter_ngrams(
             all_trigrams, corpus["artist"].values, tokens_by_doc
         )
+        filtered_quad = self._filter_ngrams(
+            all_quadgrams, corpus["artist"].values, tokens_by_doc
+        )
 
-        selected = set()
+        bi_selected = set()
+        tri_selected = set()
+        quad_selected = set()
+
         for genre in corpus["genre"].unique():
             genre_mask = corpus["genre"] == genre
-            genre_corpus = corpus[genre_mask].reset_index(drop=True)
+            genre_tokens = [
+                tokens_by_doc[i] for i in genre_mask.to_numpy().nonzero()[0]
+            ]
 
-            bi_scores = self._score_ngrams_llr(filtered_bi, genre_corpus, 2)
-            tri_scores = self._score_ngrams_llr(filtered_tri, genre_corpus, 3)
+            bi_scores = (
+                self._score_ngrams_llr(filtered_bi, genre_tokens, 2)
+                if filtered_bi
+                else pd.DataFrame()
+            )
+            tri_scores = (
+                self._score_ngrams_llr(filtered_tri, genre_tokens, 3)
+                if filtered_tri
+                else pd.DataFrame()
+            )
+            quad_scores = (
+                self._score_ngrams_llr(filtered_quad, genre_tokens, 4)
+                if filtered_quad
+                else pd.DataFrame()
+            )
 
-            top_bi = bi_scores.query(f"llr_score >= {self.llr_treshold}")[
-                "ngram"
-            ].tolist()
-            top_tri = tri_scores.query(f"llr_score >= {self.llr_treshold}")[
-                "ngram"
-            ].tolist()
+            top_bi = (
+                bi_scores.query(f"llr_score >= {self.llr_treshold}")["ngram"].tolist()
+                if not bi_scores.empty
+                else []
+            )
+            top_tri = (
+                tri_scores.query(f"llr_score >= {self.llr_treshold}")["ngram"].tolist()
+                if not tri_scores.empty
+                else []
+            )
+            top_quad = (
+                quad_scores.query(f"llr_score >= {self.llr_treshold}")["ngram"].tolist()
+                if not quad_scores.empty
+                else []
+            )
 
-            selected.update(["_".join(ng) for ng in top_bi])
-            selected.update(["_".join(ng) for ng in top_tri])
+            bi_selected.update(["_".join(ng) for ng in top_bi])
+            tri_selected.update(["_".join(ng) for ng in top_tri])
+            quad_selected.update(["_".join(ng) for ng in top_quad])
 
-        self.selected_ngrams = selected
+        self.selected_ngrams = bi_selected | tri_selected | quad_selected
         self._build_ngram_maps()
         print(
-            f"Selected {len(top_bi)} bigrams and {len(top_tri)} trigrams across genres"
+            f"Selected {len(bi_selected)} bigrams, {len(tri_selected)} "
+            f"trigrams, and {len(quad_selected)} quadgrams across genres"
         )
-        return None
+        return bi_selected, tri_selected, quad_selected
 
     def _extract_all_ngrams(
         self, tokens_by_doc: list[list[str]]
-    ) -> tuple[list[tuple[str, ...]], list[tuple[str, ...]]]:
+    ) -> tuple[list[tuple[str, ...]], list[tuple[str, ...]], list[tuple[str, ...]]]:
         all_bigrams = set()
         all_trigrams = set()
+        all_quadgrams = set()
 
         for tokens in tokens_by_doc:
             finder_bi = BigramCollocationFinder.from_words(tokens)
             finder_tri = TrigramCollocationFinder.from_words(tokens)
+            finder_quad = QuadgramCollocationFinder.from_words(tokens)
             all_bigrams.update(finder_bi.ngram_fd.keys())
             all_trigrams.update(finder_tri.ngram_fd.keys())
+            all_quadgrams.update(finder_quad.ngram_fd.keys())
 
         print(
             f"Extracted {len(all_bigrams)} unique bigrams, "
-            f"{len(all_trigrams)} unique trigrams"
+            f"{len(all_trigrams)} unique trigrams, "
+            f"{len(all_quadgrams)} unique quadgrams"
         )
-        return list(all_bigrams), list(all_trigrams)
+        return list(all_bigrams), list(all_trigrams), list(all_quadgrams)
+
+    def _strip_left_boundary(
+        self, ngrams: list[tuple[str, ...]]
+    ) -> list[tuple[str, ...]]:
+        """Remove n-grams starting with articles or infinitive markers."""
+        banned = {"a", "an", "the", "to"}
+        return [ng for ng in ngrams if ng and ng[0].lower() not in banned]
 
     def _filter_ngrams(
         self,
@@ -139,29 +189,32 @@ class IdiomExtractor:
         artists: np.ndarray,
         tokens_by_doc: list[list[str]],
     ) -> list[tuple[str, ...]]:
-        artist_counts = self._count_artists_per_ngram(ngrams, artists, tokens_by_doc)
+        counts = self._count_ngrams_per_artist_and_track(ngrams, artists, tokens_by_doc)
         filtered = [
             ng
             for ng in ngrams
-            if artist_counts.get(ng, 0) >= self.min_artists
+            if counts[ng]["artists"] >= self.min_artists
+            and counts[ng]["tracks"] >= self.min_tracks
             and not self.stopword_filter.is_stopword_only(" ".join(ng))
         ]
         print(
             f"Filtered to {len(filtered)} n-grams "
-            f"(>= {self.min_artists} artists, no stopwords)"
+            f"(>= {self.min_artists} artists, "
+            f">= {self.min_tracks} tracks, no stopwords)"
         )
         return filtered
 
-    def _count_artists_per_ngram(
+    def _count_ngrams_per_artist_and_track(
         self,
         ngrams: list[tuple[str, ...]],
         artists: np.ndarray,
         tokens_by_doc: list[list[str]],
-    ) -> dict[tuple[str, ...], int]:
+    ) -> dict[tuple[str, ...], dict[str, int]]:
         if not ngrams:
             return {}
 
         ngram_artists = defaultdict(set)
+        ngram_tracks = defaultdict(int)
         n_len = len(ngrams[0])
         ngram_set = set(ngrams)
 
@@ -171,22 +224,27 @@ class IdiomExtractor:
             )
             for ng in text_ngrams & ngram_set:
                 ngram_artists[ng].add(artist)
+                ngram_tracks[ng] += 1
 
-        return {ng: len(artists) for ng, artists in ngram_artists.items()}
+        return {
+            ng: {"artists": len(ngram_artists[ng]), "tracks": ngram_tracks[ng]}
+            for ng in ngrams
+        }
 
     def _score_ngrams_llr(
-        self, ngrams: list[tuple[str, ...]], corpus: pd.DataFrame, order: int
+        self, ngrams: list[tuple[str, ...]], tokens_by_doc: list[list[str]], order: int
     ) -> pd.DataFrame:
-        all_tokens = []
-        for text in corpus["lyrics"]:
-            all_tokens.extend(self._tokenize(text))
+        all_tokens = [token for tokens in tokens_by_doc for token in tokens]
 
         if order == 2:
             finder = BigramCollocationFinder.from_words(all_tokens)
             llr_measure = BigramAssocMeasures.likelihood_ratio
-        else:
+        elif order == 3:
             finder = TrigramCollocationFinder.from_words(all_tokens)
             llr_measure = TrigramAssocMeasures.likelihood_ratio
+        else:
+            finder = QuadgramCollocationFinder.from_words(all_tokens)
+            llr_measure = QuadgramAssocMeasures.likelihood_ratio
 
         scores = []
         for ng in ngrams:
@@ -201,6 +259,7 @@ class IdiomExtractor:
     def _build_ngram_maps(self) -> None:
         self._bigram_map = {}
         self._trigram_map = {}
+        self._quadgram_map = {}
 
         for ng_str in self.selected_ngrams:
             parts = ng_str.split("_")
@@ -208,6 +267,8 @@ class IdiomExtractor:
                 self._bigram_map[tuple(parts)] = ng_str
             elif len(parts) == 3:
                 self._trigram_map[tuple(parts)] = ng_str
+            elif len(parts) == 4:
+                self._quadgram_map[tuple(parts)] = ng_str
 
     def _replace_ngrams_in_corpus(self, corpus: pd.DataFrame) -> list[list[str]]:
         replaced_corpus = []
@@ -220,73 +281,82 @@ class IdiomExtractor:
     def _replace_ngrams_in_tokens(self, tokens: list[str]) -> list[str]:
         result = []
         i = 0
+        n = len(tokens)
 
-        while i < len(tokens):
-            matched = False
+        while i < n:
+            if i <= n - 4:
+                quadgram = (
+                    tokens[i],
+                    tokens[i + 1],
+                    tokens[i + 2],
+                    tokens[i + 3],
+                )
+                replacement = self._quadgram_map.get(quadgram)
+                if replacement:
+                    result.append(replacement)
+                    i += 4
+                    continue
 
-            if i + 2 < len(tokens):
+            if i <= n - 3:
                 trigram = (tokens[i], tokens[i + 1], tokens[i + 2])
-                if trigram in self._trigram_map:
-                    result.append(self._trigram_map[trigram])
+                replacement = self._trigram_map.get(trigram)
+                if replacement:
+                    result.append(replacement)
                     i += 3
-                    matched = True
+                    continue
 
-            if not matched and i + 1 < len(tokens):
+            if i <= n - 2:
                 bigram = (tokens[i], tokens[i + 1])
-                if bigram in self._bigram_map:
-                    result.append(self._bigram_map[bigram])
+                replacement = self._bigram_map.get(bigram)
+                if replacement:
+                    result.append(replacement)
                     i += 2
-                    matched = True
+                    continue
 
-            if not matched:
-                result.append(tokens[i])
-                i += 1
+            result.append(tokens[i])
+            i += 1
 
         return result
 
-    def _extract_unigrams(
-        self, replaced_corpus: list[list[str]], corpus: pd.DataFrame
-    ) -> set[str]:
-        token_artists = defaultdict(set)
-
-        for tokens, artist in zip(replaced_corpus, corpus["artist"]):
-            for token in tokens:
-                if "_" not in token:
-                    token_artists[token].add(artist)
-
-        unigrams = {
-            token
-            for token, artists in token_artists.items()
-            if len(artists) >= self.min_artists
-            and not self.stopword_filter.is_stopword_only(token)
-        }
-
-        print(f"Extracted {len(unigrams)} unigrams meeting criteria")
-        return unigrams
-
-    def _rank_tokens_via_tfidf(
+    def _rank_tokens_via_tfidf_per_type(
         self,
         replaced_corpus: list[list[str]],
         corpus: pd.DataFrame,
-        all_tokens: set[str],
+        bi_ngrams: set[str],
+        tri_ngrams: set[str],
+        quad_ngrams: set[str],
     ) -> list[str]:
         corpus_texts = [" ".join(tokens) for tokens in replaced_corpus]
+        vocabulary = set()
 
-        vectorizer = CountVectorizer(
-            vocabulary=list(all_tokens),
-            token_pattern=r"\b[\w']+\b",
-            lowercase=True,
-        )
-        matrix = vectorizer.fit_transform(corpus_texts)
-        features = vectorizer.get_feature_names_out()
+        for ngram_set in [bi_ngrams, tri_ngrams, quad_ngrams]:
+            if not ngram_set:
+                continue
 
-        tfidf_df = self._calculate_genre_tfidf(corpus, matrix, features)
+            vectorizer = CountVectorizer(
+                vocabulary=list(ngram_set),
+                token_pattern=r"\b[\w'_]+\b",
+                lowercase=True,
+            )
+            matrix = vectorizer.fit_transform(corpus_texts)
 
-        top_per_genre = (
-            tfidf_df.groupby("genre").head(self.top_vocab_per_genre)["ngram"].unique()
-        )
+            if matrix.nnz == 0:
+                continue
 
-        return sorted(list(set(top_per_genre)))
+            features = vectorizer.get_feature_names_out()
+            tfidf_df = self._calculate_genre_tfidf(corpus, matrix, features)
+
+            if tfidf_df.empty:
+                continue
+
+            top_per_genre = (
+                tfidf_df.groupby("genre")
+                .head(self.top_vocab_per_genre)["ngram"]
+                .unique()
+            )
+            vocabulary.update(set(top_per_genre))
+
+        return sorted(list(vocabulary))
 
     def _calculate_genre_tfidf(
         self, corpus: pd.DataFrame, matrix: csr_matrix, features: np.ndarray
@@ -303,18 +373,17 @@ class IdiomExtractor:
             ngram = features[ngram_idx]
             genre_ngram_counts[genre][ngram] += 1
 
-        ngram_idf = {}
+        # Compute IDF once for all ngrams
+        all_ngrams = set()
         for genre_dict in genre_ngram_counts.values():
-            for ngram in genre_dict.keys():
-                if ngram not in ngram_idf:
-                    genres_with_ngram = sum(
-                        1
-                        for g in genre_ngram_counts.keys()
-                        if ngram in genre_ngram_counts[g]
-                    )
-                    ngram_idf[ngram] = (
-                        np.log((num_genres + 1) / (genres_with_ngram + 1)) + 1
-                    )
+            all_ngrams.update(genre_dict.keys())
+
+        ngram_idf = {}
+        for ngram in all_ngrams:
+            genres_with_ngram = sum(
+                1 for g_dict in genre_ngram_counts.values() if ngram in g_dict
+            )
+            ngram_idf[ngram] = np.log((num_genres + 1) / (genres_with_ngram + 1)) + 1
 
         results = []
         for genre, ngram_dict in genre_ngram_counts.items():
@@ -367,8 +436,8 @@ class IdiomExtractor:
         for text in lyrics:
             tokens = self._tokenize(text)
             replaced = self._replace_ngrams_in_tokens(tokens)
-            filtered = [token for token in replaced if token in vocab_set]
-            replaced_corpus.append(" ".join(filtered))
+            filtered = " ".join(token for token in replaced if token in vocab_set)
+            replaced_corpus.append(filtered)
 
         vectorizer = CountVectorizer(
             vocabulary=list(self.vocabulary),
@@ -397,8 +466,9 @@ if __name__ == "__main__":
 
     extractor = IdiomExtractor(
         min_artists=10,
+        min_tracks=20,
         llr_treshold=10,
-        top_vocab_per_genre=300,
+        top_vocab_per_genre=100,
     )
     dtm, replaced = extractor.fit_transform(english)
 

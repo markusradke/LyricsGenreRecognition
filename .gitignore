@@ -9,3 +9,5 @@ src/helpers/__pycache__/
 notebooks/prototyping/models
 notebooks/prototyping/cat5_mock_experiment
 DIARY.md
+
+*.csv

@@ -11,15 +11,17 @@ class BoundaryStripper:
     - strip at most one token on the left and at most one token on the right
     """
 
-    def __init__(self):
+    def __init__(self, strip_left=True, strip_right=True):
         self.boundary_words = frozenset(
             {
                 "a",
                 "an",
                 "the",
-                # "but", "and", "or"
+                "to",
             }
         )
+        self.strip_left = strip_left
+        self.strip_right = strip_right
 
     def strip_boundaries(self, ngram: str) -> str:
         """Strip boundary words from ngram and return the result."""

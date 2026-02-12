@@ -3,7 +3,7 @@ import numpy as np
 import pickle
 
 from pandas import DataFrame, Series
-from typing import Dict, Tuple
+from typing import Dict
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report  # for the time being
 
@@ -145,15 +145,15 @@ class LyricsClassificationExperiment:
     def compute_idiom_ngram_features(
         self,
         min_artists=50,
+        min_tracks=100,
         llr_threshold=10,
-        top_n_per_genre=300,
-        include_unigrams=False,
+        top_n_per_ngram_pergenre=300,
     ):
         ngram_extractor = IdiomExtractor(
             min_artists=min_artists,
+            min_tracks=min_tracks,
             llr_treshold=llr_threshold,
-            top_vocab_per_genre=top_n_per_genre,
-            include_unigrams=include_unigrams,
+            top_vocab_per_genre=top_n_per_ngram_pergenre,
         )
         self.X_train, self.corpus_train_replaced = ngram_extractor.fit_transform(
             self.corpus_train
@@ -162,7 +162,7 @@ class LyricsClassificationExperiment:
         self.X_test, self.corpus_test_replaced = ngram_extractor.transform(
             self.corpus_test
         )
-        self.feature_type = f"Informed N-grams (top {top_n_per_genre} per genre, min. {min_artists} artists)"
+        self.feature_type = f"Informed N-grams (top {top_n_per_ngram_pergenre} per genre, min. {min_artists} artists, min. {min_tracks})"
 
     def compute_topics_features(
         self,
