@@ -17,6 +17,7 @@ class BayesianOptimizer:
         param_space: dict[str, list[float]],
         n_initial: int = 20,
         n_iterations: int = 30,
+        stop_iter: int = 10,
         cv: int = 5,
         scoring: str = "f1_macro",
         random_state: int = 42,
@@ -34,6 +35,7 @@ class BayesianOptimizer:
             random_state: Random seed for reproducibility
             n_jobs: Number of parallel jobs for initial phase (-1 for all)
             checkpoint_dir: Directory for saving checkpoints (None to disable)
+            stop_iter: Number of iterations without improvement before early stopping
         """
         self.param_space = param_space
         self.n_initial = n_initial
@@ -43,9 +45,12 @@ class BayesianOptimizer:
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
+        self.stop_iter = stop_iter
         self.results: list[dict] = []
         self.tuning_history: pd.DataFrame | None = None
         self.model_hash: str | None = None
+        self.best_score: float | None = None
+        self.iters_without_improvement: int = 0
 
     def run_search(self, pipeline_factory, X, y) -> pd.DataFrame:
         """Run optimization procedure with checkpointing.
@@ -141,6 +146,10 @@ class BayesianOptimizer:
         if checkpoint:
             print(f"Loaded checkpoint with {len(checkpoint['results'])} results")
             self.results = checkpoint["results"]
+            self.best_score = checkpoint.get("best_score")
+            self.iters_without_improvement = checkpoint.get(
+                "iters_without_improvement", 0
+            )
             return min(len(self.results), self.n_initial)
 
         return 0

@@ -84,10 +84,33 @@ def run_bayesian_phase(optimizer, pipeline_factory, X, y) -> None:
         )
 
         print(f"Score: {mean_score:.4f} +- {std_error:.4f} (std. err.)")
+
+        if optimizer.best_score is None or mean_score > optimizer.best_score:
+            optimizer.best_score = mean_score
+            optimizer.iters_without_improvement = 0
+            print("New best score!")
+        else:
+            optimizer.iters_without_improvement += 1
+            print(
+                f"No improvement for {optimizer.iters_without_improvement} / {optimizer.stop_iter} "
+                f"iteration(s)"
+            )
+
         print("-" * 60)
 
         if optimizer.checkpoint_dir:
             _save_optimizer_checkpoint(optimizer)
+
+        if optimizer.iters_without_improvement >= optimizer.stop_iter:
+            print("=" * 60)
+            print(
+                f"Early stopping: No improvement for {optimizer.stop_iter} "
+                f"iterations"
+            )
+            print(f"Best score achieved: {optimizer.best_score:.4f}")
+            print(f"Stopped at iteration {iteration + 1}/{optimizer.n_iterations}")
+            print("=" * 60)
+            break
 
 
 def _run_initial_sequential(
@@ -164,5 +187,7 @@ def _save_optimizer_checkpoint(optimizer) -> None:
         "cv": optimizer.cv,
         "scoring": optimizer.scoring,
         "random_state": optimizer.random_state,
+        "best_score": optimizer.best_score,
+        "iters_without_improvement": optimizer.iters_without_improvement,
     }
     save_checkpoint(checkpoint_data, optimizer.checkpoint_dir, optimizer.model_hash)

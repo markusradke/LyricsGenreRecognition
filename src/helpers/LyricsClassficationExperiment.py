@@ -169,7 +169,13 @@ class LyricsClassificationExperiment:
         self.cv_tuning_history = results.get("tuning_history", pd.DataFrame())
 
     def tune_and_train_logistic_regression(
-        self, param_space, cv=5, n_initial=20, n_iterations=50, n_jobs=-1
+        self,
+        param_space,
+        cv=5,
+        n_initial=20,
+        n_iterations=50,
+        n_jobs=-1,
+        stop_iter=10,
     ):
         self._ensure_features()
         checkpoint_dir = self.output_dir + "/optimization_checkpoints"
@@ -180,6 +186,7 @@ class LyricsClassificationExperiment:
             param_space,
             n_initial=n_initial,
             n_iterations=n_iterations,
+            stop_iter=stop_iter,
             cv=cv,
             checkpoint_dir=checkpoint_dir,
             parsimony_param="C",
