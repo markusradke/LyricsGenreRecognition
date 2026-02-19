@@ -26,7 +26,13 @@ def run_experiment(corpus, granularity):
     )
     exp.compute_fs_ngram_features(min_artists=MIN_ARTISTS, top_n=TOP_N)
     exp.tune_and_train_logistic_regression(
-        param_space=PARAM_SPACE, cv=5, n_initial=10, n_iterations=25, n_jobs=50
+        param_space=PARAM_SPACE,
+        cv=5,
+        n_initial=10,
+        n_iterations=25,
+        n_jobs=50,
+        stop_iter=10,
+        uncertain_jump=5,
     )
     exp.save_experiment()
 

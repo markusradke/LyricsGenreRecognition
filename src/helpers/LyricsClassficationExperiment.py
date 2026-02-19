@@ -176,6 +176,7 @@ class LyricsClassificationExperiment:
         n_iterations=50,
         n_jobs=-1,
         stop_iter=10,
+        uncertain_jump=5,
     ):
         self._ensure_features()
         checkpoint_dir = self.output_dir + "/optimization_checkpoints"
@@ -187,6 +188,7 @@ class LyricsClassificationExperiment:
             n_initial=n_initial,
             n_iterations=n_iterations,
             stop_iter=stop_iter,
+            uncertain_jump=uncertain_jump,
             cv=cv,
             checkpoint_dir=checkpoint_dir,
             parsimony_param="C",

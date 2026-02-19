@@ -66,8 +66,21 @@ def run_bayesian_phase(optimizer, pipeline_factory, X, y) -> None:
 
     for iteration in range(completed_bayesian, optimizer.n_iterations):
         print(f"Bayesian iteration {iteration + 1}/{optimizer.n_iterations}")
+
+        use_uncertainty = (
+            optimizer.uncertain_jump > 0
+            and optimizer.iters_without_improvement >= optimizer.uncertain_jump
+            and optimizer.iters_since_jump >= optimizer.uncertain_jump
+        )
+
+        if use_uncertainty:
+            print("[Uncertainty Jump] Exploring high-uncertainty region")
+
         next_params = suggest_next_params(
-            optimizer.results, optimizer.param_space, optimizer.random_state
+            optimizer.results,
+            optimizer.param_space,
+            optimizer.random_state,
+            use_uncertainty=use_uncertainty,
         )
         mean_score, std_error = evaluate_params(
             pipeline_factory,
@@ -95,6 +108,11 @@ def run_bayesian_phase(optimizer, pipeline_factory, X, y) -> None:
                 f"No improvement for {optimizer.iters_without_improvement} / {optimizer.stop_iter} "
                 f"iteration(s)"
             )
+
+        if use_uncertainty:
+            optimizer.iters_since_jump = 0
+        else:
+            optimizer.iters_since_jump += 1
 
         print("-" * 60)
 
@@ -189,5 +207,6 @@ def _save_optimizer_checkpoint(optimizer) -> None:
         "random_state": optimizer.random_state,
         "best_score": optimizer.best_score,
         "iters_without_improvement": optimizer.iters_without_improvement,
+        "iters_since_jump": optimizer.iters_since_jump,
     }
     save_checkpoint(checkpoint_data, optimizer.checkpoint_dir, optimizer.model_hash)

@@ -18,6 +18,7 @@ class BayesianOptimizer:
         n_initial: int = 20,
         n_iterations: int = 30,
         stop_iter: int = 10,
+        uncertain_jump: int = 5,
         cv: int = 5,
         scoring: str = "f1_macro",
         random_state: int = 42,
@@ -30,12 +31,13 @@ class BayesianOptimizer:
             param_space: Parameter search space with ranges
             n_initial: Number of initial Latin hypercube samples
             n_iterations: Number of Bayesian optimization iterations
+            stop_iter: Number of iterations without improvement before early stopping
+            uncertain_jump: Interval for uncertainty-based exploration jumps
             cv: Number of cross-validation folds
             scoring: Scoring metric for evaluation
             random_state: Random seed for reproducibility
             n_jobs: Number of parallel jobs for initial phase (-1 for all)
             checkpoint_dir: Directory for saving checkpoints (None to disable)
-            stop_iter: Number of iterations without improvement before early stopping
         """
         self.param_space = param_space
         self.n_initial = n_initial
@@ -46,11 +48,13 @@ class BayesianOptimizer:
         self.n_jobs = n_jobs
         self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
         self.stop_iter = stop_iter
+        self.uncertain_jump = uncertain_jump
         self.results: list[dict] = []
         self.tuning_history: pd.DataFrame | None = None
         self.model_hash: str | None = None
         self.best_score: float | None = None
         self.iters_without_improvement: int = 0
+        self.iters_since_jump: int = 0
 
     def run_search(self, pipeline_factory, X, y) -> pd.DataFrame:
         """Run optimization procedure with checkpointing.
@@ -150,6 +154,7 @@ class BayesianOptimizer:
             self.iters_without_improvement = checkpoint.get(
                 "iters_without_improvement", 0
             )
+            self.iters_since_jump = checkpoint.get("iters_since_jump", 0)
             return min(len(self.results), self.n_initial)
 
         return 0

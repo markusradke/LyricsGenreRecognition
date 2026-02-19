@@ -30,6 +30,7 @@ def suggest_next_params(
     results: list[dict],
     param_space: dict[str, list[float]],
     random_state: int,
+    use_uncertainty: bool = False,
 ) -> dict[str, float]:
     """Suggest next parameter configuration using Gaussian process.
 
@@ -37,6 +38,7 @@ def suggest_next_params(
         results: List of evaluation results
         param_space: Parameter search space
         random_state: Random seed for reproducibility
+        use_uncertainty: If True, select based on uncertainty rather than acquisition
 
     Returns:
         Parameter dictionary for next evaluation
@@ -44,7 +46,9 @@ def suggest_next_params(
     X_train, y_train = _extract_training_data(results, param_space)
     gp = fit_gaussian_process(X_train, y_train, random_state)
     candidates = _generate_candidates(param_space, random_state, len(results))
-    best_candidate = _select_best_candidate(gp, candidates, param_space)
+    best_candidate = _select_best_candidate(
+        gp, candidates, param_space, use_uncertainty
+    )
 
     return best_candidate
 
@@ -87,13 +91,15 @@ def _select_best_candidate(
     gp: GaussianProcessRegressor,
     candidates: list[dict[str, float]],
     param_space: dict[str, list[float]],
+    use_uncertainty: bool = False,
 ) -> dict[str, float]:
-    """Select best candidate using acquisition function.
+    """Select best candidate using acquisition function or uncertainty.
 
     Args:
         gp: Fitted Gaussian process model
         candidates: List of candidate parameter configurations
         param_space: Parameter search space
+        use_uncertainty: If True, select region with highest uncertainty
 
     Returns:
         Best candidate parameter dictionary
@@ -102,7 +108,13 @@ def _select_best_candidate(
     X_candidates = np.array([[c[p] for p in param_names] for c in candidates])
 
     mu, sigma = gp.predict(X_candidates, return_std=True)
-    acquisition = mu + 2.0 * sigma
 
-    best_idx = int(np.argmax(acquisition))
+    if use_uncertainty:
+        # Select candidate with highest uncertainty (exploration)
+        selection_criterion = sigma
+    else:
+        # Use standard acquisition function (exploitation + exploration)
+        selection_criterion = mu + 2.0 * sigma
+
+    best_idx = int(np.argmax(selection_criterion))
     return candidates[best_idx]
