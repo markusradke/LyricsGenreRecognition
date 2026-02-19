@@ -13,38 +13,19 @@ from helpers.split_group_stratified_and_join import (
 )
 from helpers.LyricsClassificationMetrics import LyricsClassificationMetrics
 from helpers.NGramFeatureExctractorFS import NGramFeatureExtractorFS
-from helpers.IdiomExtractor import IdiomExtractor
+from helpers.ExpressionExtractor import ExpressionExtractor
 from helpers.TopicFeatureExtractor import TopicFeatureExtractor
 from helpers.GenreClassifierTrainer import GenreClassifierTrainer
 
 
 class LyricsClassificationExperiment:
-    granularity: int
-    output_dir: str
-    test_size: float
-    corpus_train: DataFrame
-    corpus_test: DataFrame
-    corpus_train_replaced: DataFrame
-    corpus_test_replaced: DataFrame
-    random_performance_baseline: LyricsClassificationMetrics
-    X_train: DataFrame
-    X_test: DataFrame
-    y_train: Series
-    y_test: Series
-    feature_type: str
-    model: object
-    model_parameters: Dict[str, float]
-    model_coefficients: DataFrame
-    cv_tuning_history: DataFrame
-    random_state: int
-    subsample_debug: float
-
     def __init__(
         self,
         corpus,
         genrecol,
         lyricscol,
         artistcol,
+        yearcol,
         output_dir,
         test_size=0.2,
         random_state=42,
@@ -55,7 +36,7 @@ class LyricsClassificationExperiment:
         self.test_size = test_size
         self.subsample_debug = subsample_debug
         self.corpus_train, self.corpus_test = self._prepare_corpus(
-            corpus, genrecol, lyricscol, artistcol
+            corpus, genrecol, lyricscol, artistcol, yearcol
         )
         self.corpus_train_replaced = (
             self.corpus_train
@@ -91,12 +72,13 @@ class LyricsClassificationExperiment:
 
         return out
 
-    def _prepare_corpus(self, corpus, genrecol, lyricscol, artistcol):
-        selected = corpus[[genrecol, lyricscol, artistcol]].rename(
+    def _prepare_corpus(self, corpus, genrecol, lyricscol, artistcol, yearcol):
+        selected = corpus[[genrecol, lyricscol, artistcol, yearcol]].rename(
             {
                 genrecol: "genre",
                 lyricscol: "lyrics",
                 artistcol: "artist",
+                yearcol: "releaseyear",
             },
             axis=1,
         )
@@ -149,7 +131,7 @@ class LyricsClassificationExperiment:
         llr_threshold=10,
         top_n_per_ngram_pergenre=300,
     ):
-        ngram_extractor = IdiomExtractor(
+        ngram_extractor = ExpressionExtractor(
             min_artists=min_artists,
             min_tracks=min_tracks,
             llr_treshold=llr_threshold,

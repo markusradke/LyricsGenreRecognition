@@ -18,15 +18,15 @@ from sklearn.feature_extraction.text import CountVectorizer
 from helpers.StopwordFilter import StopwordFilter
 
 
-class IdiomExtractor:
-    """Extract idioms using LLR-scored n-grams and TF-IDF ranking."""
+class ExpressionExtractor:
+    """Extract phrases using LLR-scored n-grams and TF-IDF ranking."""
 
     def __init__(
         self,
         min_artists: int = 50,
         min_tracks: int = 100,
         llr_treshold: int = 1000,
-        top_vocab_per_genre: int = 300,
+        top_vocab_per_genre: int | None = 100,
         random_state: int = 42,
     ):
         self.min_artists = min_artists
@@ -35,6 +35,7 @@ class IdiomExtractor:
         self.top_vocab_per_genre = top_vocab_per_genre
         self.random_state = random_state
         self.stopword_filter = StopwordFilter()
+        self.top_per_genre = pd.DataFrame(columns=["genre", "ngram", "tfidf"])
         self.vocabulary = []
         self.selected_ngrams = set()
         self._bigram_map = {}
@@ -50,7 +51,7 @@ class IdiomExtractor:
         in the corpus, extract unigrams from the modified text, and build a final ranked
         vocabulary via genre TF–IDF.
         Args:
-            corpus (pd.DataFrame): Input dataframe containing at least a "lyrics" and a "genre" column.
+            corpus (pd.DataFrame): Input dataframe containing at least a "lyrics", "artist", and a "genre" column.
         Returns:
           Tuple[pd.DataFrame, pd.DataFrame]: (ngram_counts, replaced_corpus)
                 - ngram_counts: DataFrame with counts of detected n-grams from corpus["lyrics"].
@@ -75,7 +76,9 @@ class IdiomExtractor:
         print(f"\nFinal vocabulary size: {len(self.vocabulary)}")
 
         dtm = self._count_ngrams_in_corpus(corpus["lyrics"])
-        replaced_corpus = self._tidy_replaced_corpus(replaced_corpus, corpus["genre"])
+        replaced_corpus = self._tidy_replaced_corpus(
+            replaced_corpus, corpus["genre"], corpus["artist"], corpus["releaseyear"]
+        )
 
         return dtm, replaced_corpus
 
@@ -326,6 +329,12 @@ class IdiomExtractor:
         tri_ngrams: set[str],
         quad_ngrams: set[str],
     ) -> list[str]:
+        all_ngrams = bi_ngrams | tri_ngrams | quad_ngrams
+
+        if self.top_vocab_per_genre is None:
+            print("Bypassing TF-IDF ranking, using all selected n-grams as vocabulary")
+            return sorted(list(all_ngrams))
+
         corpus_texts = [" ".join(tokens) for tokens in replaced_corpus]
         vocabulary = set()
 
@@ -349,11 +358,8 @@ class IdiomExtractor:
             if tfidf_df.empty:
                 continue
 
-            top_per_genre = (
-                tfidf_df.groupby("genre")
-                .head(self.top_vocab_per_genre)["ngram"]
-                .unique()
-            )
+            top_per_genre = tfidf_df.groupby("genre").head(self.top_vocab_per_genre)
+            top_per_genre = top_per_genre["ngram"].unique()
             vocabulary.update(set(top_per_genre))
 
         return sorted(list(vocabulary))
@@ -400,7 +406,9 @@ class IdiomExtractor:
     def _tokenize(self, text: str) -> list[str]:
         return [word.lower() for word in text.split() if word.isalpha()]
 
-    def _tidy_replaced_corpus(self, replaced: list, genres=None) -> pd.DataFrame:
+    def _tidy_replaced_corpus(
+        self, replaced: list, genres=None, artists=None, releaseyear=None
+    ) -> pd.DataFrame:
         """Convert corpus to a DataFrame and remove all words / tokens that are not part of the fitted vocabulary."""
         documents = list()
         for document in replaced:
@@ -409,6 +417,10 @@ class IdiomExtractor:
         tidied = pd.DataFrame(documents, columns=["lyrics"])
         if genres is not None:
             tidied["genre"] = genres
+        if artists is not None:
+            tidied["artist"] = artists
+        if releaseyear is not None:
+            tidied["releaseyear"] = releaseyear
         return tidied
 
     def transform(self, corpus: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -459,18 +471,24 @@ if __name__ == "__main__":
             "lyrics_lemmatized": "lyrics",
             "track.s.firstartist.name": "artist",
             "cat12": "genre",
+            "album.s.releaseyear": "releaseyear",
         },
         inplace=True,
     )
     english = english.sample(1000, random_state=42)
 
-    extractor = IdiomExtractor(
-        min_artists=10,
-        min_tracks=20,
+    extractor = ExpressionExtractor(
+        min_artists=50,
+        min_tracks=0,
         llr_treshold=10,
-        top_vocab_per_genre=100,
+        # top_vocab_per_genre=100,
+        top_vocab_per_genre=None,
     )
     dtm, replaced = extractor.fit_transform(english)
 
     print(f"\nVocabulary for {english}:")
     print(extractor.vocabulary)
+    # save vocabulary as txt
+    with open("english_vocabulary.txt", "w") as f:
+        for token in extractor.vocabulary:
+            f.write(f"{token}\n")
