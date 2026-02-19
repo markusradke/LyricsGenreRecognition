@@ -146,32 +146,6 @@ class LyricsClassificationExperiment:
         )
         self.feature_type = f"Informed N-grams (top {top_n_per_ngram_pergenre} per genre, min. {min_artists} artists, min. {min_tracks})"
 
-    def compute_topics_features(
-        self,
-        n_topics=(2, 50, 5),
-    ):
-        """
-        Compute topic features from collocated features using Biterm Topic Modeling.
-        Args:
-            n_topics: Tuple of (min_topics, max_topics, step) for topic numbers.
-        """
-        topics_extractor = TopicFeatureExtractor(
-            num_topics=n_topics, random_state=self.random_state
-        )
-
-        self.X_train, self.topic_model = topics_extractor.fit_transform(
-            self.corpus_train_replaced
-        )
-        self.topics_extractor = topics_extractor
-        self.X_test = topics_extractor.transform(self.corpus_test_replaced)
-        # self.topic_score_train = topics_extractor.get_topic_score(
-        #     self.corpus_train_replaced
-        # )
-        # self.topic_score_test = topics_extractor.get_topic_score(
-        #     self.corpus_test_replaced
-        # )
-        self.feature_type = f"Topic probabilities (topics {n_topics[0]}-{n_topics[1]} step {n_topics[2]})"
-
     def _ensure_features(self):
         if self.X_train is None:
             raise ValueError(
@@ -254,7 +228,7 @@ class LyricsClassificationExperiment:
     def show_model_evaluation(self, top_n_coefficients=10):
         print("Selected model parameters:")
         for parameter, value in self.model_parameters.items():
-            print(f"  {parameter}: {value:.3f}")
+            print(f"  {parameter}: {value}")
         print("=" * 60)
         y_pred = self.model.predict(self.X_test)
         print(LyricsClassificationMetrics(self.y_test, y_pred))

@@ -5,6 +5,7 @@ import pandas as pd
 from imblearn.pipeline import Pipeline as ImbPipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
+from typing import Any
 
 from .adaptive_sampling import AdaptiveSampler
 from .bayesian_optimization import BayesianOptimizer
@@ -35,37 +36,44 @@ class GenreClassifierTrainer:
         self.coefficients_ = None
         self.tuning_history_ = None
 
-    def _create_pipeline(self, params: dict[str, float]) -> ImbPipeline:
+    def _create_pipeline(self, params: dict[str, Any]) -> ImbPipeline:
         """Create pipeline from parameters.
 
         Args:
-            params: Pipeline parameters (C, l1_ratio, target_ratio)
+            params: Pipeline parameters (may include C, l1_ratio, target_ratio). Adaptive sampler is only added
+                    when target ratio is provided in params.
 
         Returns:
-            Configured pipeline
+            Configured pipeline. Always employs class-weighted loss.
         """
-        return ImbPipeline(
-            [
-                ("scaler", StandardScaler()),
+        steps = [("scaler", StandardScaler())]
+
+        if params.get("target_ratio") is not None:
+            steps.append(
                 (
                     "sampler",
                     AdaptiveSampler(
                         target_ratio=params["target_ratio"],
                         random_state=self.random_state,
                     ),
+                )
+            )
+
+        steps.append(
+            (
+                "classifier",
+                LogisticRegression(
+                    C=params.get("C", 1.0),
+                    l1_ratio=params.get("l1_ratio", 0.5),
+                    solver="saga",
+                    max_iter=10000,
+                    random_state=self.random_state,
+                    class_weight="balanced",
                 ),
-                (
-                    "classifier",
-                    LogisticRegression(
-                        C=params["C"],
-                        l1_ratio=params["l1_ratio"],
-                        solver="saga",
-                        max_iter=1000,
-                        random_state=self.random_state,
-                    ),
-                ),
-            ]
+            )
         )
+
+        return ImbPipeline(steps)
 
     def _extract_coefficients(
         self, pipeline: ImbPipeline, feature_names: list[str]
@@ -133,6 +141,7 @@ class GenreClassifierTrainer:
         self.best_params_ = optimizer.select_best_one_se(
             param_parsim=parsimony_param, ascending=True
         )
+        print(f"{pd.DataFrame(self.best_params_, index=['Best Parameters:'])}")
 
         print("Retraining best pipeline on full training data...")
         self.best_pipeline_ = self._create_pipeline(self.best_params_)
