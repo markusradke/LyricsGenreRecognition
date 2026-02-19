@@ -1,3 +1,4 @@
+from scipy.constants import year
 import pandas as pd
 import numpy as np
 from helpers.LyricsClassficationExperiment import LyricsClassificationExperiment
@@ -20,11 +21,14 @@ def run_experiment(corpus, granularity):
         genrecol=f"cat{granularity}",
         lyricscol="full_lyrics",
         artistcol="track.s.firstartist.name",
+        yearcol="album.s.releasyear",
         output_dir=f"models/cat{granularity}_FS_only_ngram_experiment",
         test_size=0.2,
         random_state=42,
     )
-    exp.compute_fs_ngram_features(min_artists=MIN_ARTISTS, top_n=TOP_N)
+    exp.compute_fs_ngram_features(
+        min_artists=MIN_ARTISTS, top_n_per_genre_and_ngram=TOP_N
+    )
     exp.tune_and_train_logistic_regression(
         param_space=PARAM_SPACE,
         cv=5,
