@@ -32,6 +32,10 @@ def split_group_stratified_and_join(
     X_train, X_test, y_train, y_test = _split_X_labels(
         X, labels_and_group, train_mask, test_mask
     )
+    validate_artist_split(
+        labels_and_group.loc[train_mask], 
+        labels_and_group.loc[test_mask], group_col="group"
+    )
     return X_train, X_test, y_train, y_test
 
 
@@ -46,6 +50,7 @@ def _split_by_group(
         stratify=group_labels.values,
         random_state=random_state,
     )
+    assert len(set(group_train).intersection(group_test)) == 0, "Split failed: Groups overlap between train and test!"
     return group_train, group_test
 
 
@@ -81,6 +86,28 @@ def _split_X_labels(
     y_test = labels_and_group.loc[test_mask, "label"].reset_index(drop=True)
     return X_train, X_test, y_train, y_test
 
+
+def validate_artist_split(
+    train: pd.DataFrame,
+    test: pd.DataFrame,
+    group_col: str = "artist"
+) -> None:
+    """
+    Verify no artist appears in both train and test sets.
+    Raises ValueError if overlap detected.
+    """
+    train_artists = set(train[group_col].unique())
+    test_artists = set(test[group_col].unique())
+    
+    overlap = train_artists.intersection(test_artists)
+    
+    if len(overlap) > 0:
+        raise ValueError(
+            f"Artist overlap detected: {len(overlap)} artists in both splits.\n"
+            f"Examples: {list(overlap)[:5]}"
+        )
+    
+    print(f"Artist split validated: {len(train_artists)} train, {len(test_artists)} test (disjoint)")
 
 def plot_comparison_genre_distributions(
     y_train: pd.Series, y_test: pd.Series

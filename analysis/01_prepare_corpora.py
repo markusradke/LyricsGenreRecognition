@@ -1,6 +1,6 @@
 import pandas as pd
 from helpers.generate_report import generate_report
-from helpers.CorpusLemmatizer import CorpusLemmatizer
+from helpers.SpacyCorpusProcessor import SpacyCorpusProcessor
 
 print("READ IN FULL CORPUS CSV FILE...")
 corpus = pd.read_csv(
@@ -26,9 +26,9 @@ english = corpus[
 english.to_csv("data/poptrag_lyrics_genres_corpus_filtered_english.csv", index=True)
 
 
-english_lemmatizer = CorpusLemmatizer(english, lyrics_column="full_lyrics")
-english_lemmatizer.lemmatize()
-english_lemmatizer.save_lemmatized(
+processor = SpacyCorpusProcessor(english, lyrics_column="full_lyrics")
+processor.process()
+processor.save_processed(
     "data/poptrag_lyrics_genres_corpus_filtered_english_lemmatized.csv"
 )
 

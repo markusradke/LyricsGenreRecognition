@@ -11,7 +11,7 @@ class LyricsClassificationMetrics:
         self.cohen_kappa = cohen_kappa_score(y_true, y_pred)
         self.f1_macro = f1_score(y_true, y_pred, average="macro")
         self.precision_macro = precision_score(y_true, y_pred, average="macro")
-        self.recall_macro = precision_score(y_true, y_pred, average="macro")
+        self.recall_macro = recall_score(y_true, y_pred, average="macro")
 
     def __str__(self):
         return (

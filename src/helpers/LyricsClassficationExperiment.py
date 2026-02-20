@@ -14,8 +14,8 @@ from helpers.split_group_stratified_and_join import (
 from helpers.LyricsClassificationMetrics import LyricsClassificationMetrics
 from helpers.NGramFeatureExctractorFS import NGramFeatureExtractorFS
 from helpers.InformedExtractor import InformedExtractor
-from helpers.TopicFeatureExtractor import TopicFeatureExtractor
 from helpers.GenreClassifierTrainer import GenreClassifierTrainer
+from helpers.FeatureCache import FeatureCache
 
 
 class LyricsClassificationExperiment:
@@ -48,6 +48,7 @@ class LyricsClassificationExperiment:
         self.y_train = self.corpus_train["genre"]
         self.y_test = self.corpus_test["genre"]
         self.model = None
+        self.feature_cache = FeatureCache(cache_dir=f"{self.output_dir}/feature_cache")
 
     def __str__(self):
         out = (
@@ -113,38 +114,96 @@ class LyricsClassificationExperiment:
         y_pred = pd.Series(sampled, index=y_test.index, name="pred")
         return LyricsClassificationMetrics(y_test, y_pred)
 
+    def _compute_features_with_cache(
+        self, extractor_class, extractor_name, feature_description, **extractor_kwargs
+    ):
+        """
+        Generic method to compute features with caching.
+        Handles both FS and Informed extractors.
+        """
+        cache_key = self.feature_cache._compute_hash(
+            extractor_name,
+            self.corpus_train["lyrics"].values.tobytes(),
+            **extractor_kwargs,
+        )
+
+        cached = self.feature_cache.get(cache_key)
+        if cached is not None:
+            print(f"{extractor_name} features loaded from cache")
+            self.X_train = cached["X_train"]
+            self.X_test = cached["X_test"]
+            self.ngram_extractor = cached["extractor"]
+            self.feature_type = feature_description
+
+            if "corpus_train_replaced" in cached:
+                self.corpus_train_replaced = cached["corpus_train_replaced"]
+                self.corpus_test_replaced = cached["corpus_test_replaced"]
+            return
+
+        print(f"Extracting {extractor_name} features (not cached)...")
+        ngram_extractor = extractor_class(**extractor_kwargs)
+
+        fit_result = ngram_extractor.fit_transform(self.corpus_train)
+        if isinstance(fit_result, tuple):
+            self.X_train, self.corpus_train_replaced = fit_result
+        else:
+            self.X_train = fit_result
+
+        self.ngram_extractor = ngram_extractor
+
+        transform_result = ngram_extractor.transform(
+            self.corpus_test["lyrics"]
+            if hasattr(self.corpus_test, "lyrics")
+            else self.corpus_test
+        )
+        if isinstance(transform_result, tuple):
+            self.X_test, self.corpus_test_replaced = transform_result
+        else:
+            self.X_test = transform_result
+
+        self.feature_type = feature_description
+
+        cache_data = {
+            "X_train": self.X_train,
+            "X_test": self.X_test,
+            "extractor": self.ngram_extractor,
+        }
+
+        if (
+            hasattr(self, "corpus_train_replaced")
+            and self.corpus_train_replaced is not self.corpus_train
+        ):
+            cache_data["corpus_train_replaced"] = self.corpus_train_replaced
+            cache_data["corpus_test_replaced"] = self.corpus_test_replaced
+
+        self.feature_cache.set(cache_key, cache_data)
+
     def compute_fs_ngram_features(self, min_artists=50, top_n_per_genre_and_ngram=100):
-        ngram_extractor = NGramFeatureExtractorFS(
+        self._compute_features_with_cache(
+            extractor_class=NGramFeatureExtractorFS,
+            extractor_name="NGramFeatureExtractorFS",
+            feature_description=f"Fell-Spohrleder (2014) N-grams (top {top_n_per_genre_and_ngram} (per genre and ngram type), min. {min_artists} artists)",
             min_artists=min_artists,
             top_n=top_n_per_genre_and_ngram,
             random_state=self.random_state,
         )
-        self.X_train = ngram_extractor.fit(self.corpus_train)
-        self.ngram_extractor = ngram_extractor
-        self.X_test = ngram_extractor.transform(self.corpus_test["lyrics"])
-        self.feature_type = f"Fell-Spohrleder (2014) N-grams (top {top_n_per_genre_and_ngram} (per genre and ngram type), min. {min_artists} artists)"
 
-    def compute_idiom_ngram_features(
+    def compute_informed_ngram_features(
         self,
         min_artists=50,
-        min_tracks=100,
+        min_tracks=0,
         llr_threshold=10,
         top_n_per_ngram_pergenre=300,
     ):
-        ngram_extractor = InformedExtractor(
+        self._compute_features_with_cache(
+            extractor_class=InformedExtractor,
+            extractor_name="InformedExtractor",
+            feature_description=f"Informed N-grams (top {top_n_per_ngram_pergenre} per genre, min. {min_artists} artists, min. {min_tracks})",
             min_artists=min_artists,
             min_tracks=min_tracks,
-            llr_treshold=llr_threshold,
+            llr_threshold=llr_threshold,
             top_vocab_per_genre=top_n_per_ngram_pergenre,
         )
-        self.X_train, self.corpus_train_replaced = ngram_extractor.fit_transform(
-            self.corpus_train
-        )
-        self.ngram_extractor = ngram_extractor
-        self.X_test, self.corpus_test_replaced = ngram_extractor.transform(
-            self.corpus_test
-        )
-        self.feature_type = f"Informed N-grams (top {top_n_per_ngram_pergenre} per genre, min. {min_artists} artists, min. {min_tracks})"
 
     def _ensure_features(self):
         if self.X_train is None:

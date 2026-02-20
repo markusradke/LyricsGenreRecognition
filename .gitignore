@@ -5,9 +5,15 @@ models
 reports
 notebooks/.ipynb_checkpoints/
 src/helpers/__pycache__/
+src/helpers/_old
 *nbconvert*
 notebooks/prototyping/models
-notebooks/prototyping/cat5_mock_experiment
+notebooks/prototyping/_old
+notebooks/prototyping/*_experiment
 DIARY.md
+_old
 
 *.csv
+METHODS_NOTES.md
+PROGRESS.md
+PROJECT_PLAN.md

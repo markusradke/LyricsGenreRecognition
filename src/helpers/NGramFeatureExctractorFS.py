@@ -20,7 +20,7 @@ class NGramFeatureExtractorFS:
         self.features: dict[str, np.ndarray] = {}
         self.final_ngrams: set[str] = set()
 
-    def fit(self, corpus: pd.DataFrame) -> pd.DataFrame:
+    def fit_transform(self, corpus: pd.DataFrame) -> pd.DataFrame:
         """Extract and select n-gram features from corpus.
 
         Args:
