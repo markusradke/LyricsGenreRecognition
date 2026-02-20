@@ -3,6 +3,7 @@ data-raw
 models
 .venv
 reports
+analysis/_old
 notebooks/.ipynb_checkpoints/
 src/helpers/__pycache__/
 src/helpers/_old

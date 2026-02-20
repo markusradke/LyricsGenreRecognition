@@ -13,9 +13,12 @@ from helpers.split_group_stratified_and_join import (
 )
 from helpers.LyricsClassificationMetrics import LyricsClassificationMetrics
 from helpers.NGramFeatureExctractorFS import NGramFeatureExtractorFS
+from helpers.FSExtractor import FSExtractor
+from helpers.MonroeExtractor import MonroeExtractor
 from helpers.InformedExtractor import InformedExtractor
 from helpers.GenreClassifierTrainer import GenreClassifierTrainer
 from helpers.FeatureCache import FeatureCache
+from helpers.config import MIN_ARTISTS, DEBUG_SAMPLE_SIZE
 
 
 class LyricsClassificationExperiment:
@@ -29,12 +32,17 @@ class LyricsClassificationExperiment:
         output_dir,
         test_size=0.2,
         random_state=42,
-        subsample_debug=1.0,
+        subsample_debug=None,
     ):
         self.random_state = random_state
         self.output_dir = output_dir
         self.test_size = test_size
-        self.subsample_debug = subsample_debug
+        # Use DEBUG_SAMPLE_SIZE from config if subsample_debug not explicitly provided
+        self.subsample_debug = (
+            subsample_debug
+            if subsample_debug is not None
+            else (DEBUG_SAMPLE_SIZE or 1.0)
+        )
         self.corpus_train, self.corpus_test = self._prepare_corpus(
             corpus, genrecol, lyricscol, artistcol, yearcol
         )
@@ -205,18 +213,115 @@ class LyricsClassificationExperiment:
             top_vocab_per_genre=top_n_per_ngram_pergenre,
         )
 
+    def compute_fs_ngram_features_pipeline(
+        self,
+        min_artists=MIN_ARTISTS,
+        top_vocab_per_genre=100,
+        use_stopword_filter=True,
+        include_unigrams=True,
+    ):
+        """Create FSExtractor for pipeline-based training (refactored approach)."""
+        self.extractor = FSExtractor(
+            min_artists=min_artists,
+            top_vocab_per_genre=top_vocab_per_genre,
+            use_stopword_filter=use_stopword_filter,
+            include_unigrams=include_unigrams,
+            random_state=self.random_state,
+        )
+        unigrams_str = "with unigrams" if include_unigrams else "phrases only"
+        stopwords_str = (
+            "stopwords filtered" if use_stopword_filter else "stopwords kept"
+        )
+        self.feature_type = f"FS N-grams (pipeline, top {top_vocab_per_genre}/genre, min {min_artists} artists, {unigrams_str}, {stopwords_str})"
+        print(f"FSExtractor configured: {self.feature_type}")
+
+    def compute_monroe_ngram_features(
+        self,
+        min_artists=MIN_ARTISTS,
+        mode="3D",
+        use_stopword_filter=True,
+        include_unigrams=True,
+        **monroe_kwargs,
+    ):
+        """Create MonroeExtractor for pipeline-based training.
+
+        Args:
+            min_artists: Minimum artists threshold
+            mode: '3D' (single alpha) or '6D' (per-order alphas)
+            use_stopword_filter: Whether to filter stopword-only n-grams
+            include_unigrams: Whether to include unigrams (False = phrases only)
+            **monroe_kwargs: Additional Monroe parameters (z_threshold, apply_fdr, etc.)
+        """
+        # Set default alphas based on mode
+        if mode == "3D":
+            default_params = {
+                "alpha_unigram": 1.0,
+                "alpha_bigram": 1.0,
+                "alpha_trigram": 1.0,
+                "alpha_quadgram": 1.0,
+            }
+        else:  # 6D mode with separate alphas
+            default_params = {}
+
+        # Merge with provided kwargs
+        extractor_params = {**default_params, **monroe_kwargs}
+        extractor_params["min_artists"] = min_artists
+        extractor_params["use_stopword_filter"] = use_stopword_filter
+        extractor_params["include_unigrams"] = include_unigrams
+        extractor_params["random_state"] = self.random_state
+
+        self.extractor = MonroeExtractor(**extractor_params)
+        unigrams_str = "with unigrams" if include_unigrams else "phrases only"
+        stopwords_str = (
+            "stopwords filtered" if use_stopword_filter else "stopwords kept"
+        )
+        self.feature_type = f"Monroe N-grams ({mode}, min {min_artists} artists, {unigrams_str}, {stopwords_str}, FDR={'on' if extractor_params.get('apply_fdr', True) else 'off'})"
+        print(f"MonroeExtractor configured: {self.feature_type}")
+
     def _ensure_features(self):
         if self.X_train is None:
             raise ValueError(
                 "Features not computed. Call compute_fs_ngram_features() first."
             )
 
-    def _create_trainer(self, n_jobs=None):
-        if n_jobs is None:
-            return GenreClassifierTrainer(self.X_train, self.y_train, self.random_state)
-        return GenreClassifierTrainer(
-            self.X_train, self.y_train, self.random_state, n_jobs
-        )
+    def _create_trainer(self, n_jobs=None, use_pipeline=False):
+        """Create trainer with optional pipeline mode.
+
+        Args:
+            n_jobs: Number of parallel jobs
+            use_pipeline: If True, use extractor-in-pipeline mode (requires self.extractor)
+        """
+        if use_pipeline:
+            if not hasattr(self, "extractor") or self.extractor is None:
+                raise ValueError(
+                    "use_pipeline=True requires calling compute_*_features_pipeline() first"
+                )
+            # Pass raw lyrics and extractor to trainer
+            if n_jobs is None:
+                return GenreClassifierTrainer(
+                    self.corpus_train["lyrics"],
+                    self.y_train,
+                    self.random_state,
+                    extractor=self.extractor,
+                    artist_train=self.corpus_train["artist"],
+                )
+            return GenreClassifierTrainer(
+                self.corpus_train["lyrics"],
+                self.y_train,
+                self.random_state,
+                n_jobs,
+                extractor=self.extractor,
+                artist_train=self.corpus_train["artist"],
+            )
+        else:
+            # Original behavior: use pre-extracted features
+            if n_jobs is None:
+                return GenreClassifierTrainer(
+                    self.X_train, self.y_train, self.random_state
+                )
+            return GenreClassifierTrainer(
+                self.X_train, self.y_train, self.random_state, n_jobs
+            )
 
     def _fit_and_store_results(self, trainer, method_name, *args, **kwargs):
         fit_fn = getattr(trainer, method_name)
@@ -236,10 +341,12 @@ class LyricsClassificationExperiment:
         n_jobs=-1,
         stop_iter=10,
         uncertain_jump=5,
+        use_pipeline=False,
     ):
-        self._ensure_features()
+        if not use_pipeline:
+            self._ensure_features()
         checkpoint_dir = self.output_dir + "/optimization_checkpoints"
-        trainer = self._create_trainer(n_jobs)
+        trainer = self._create_trainer(n_jobs, use_pipeline=use_pipeline)
         self._fit_and_store_results(
             trainer,
             "fit_with_bayesian_optimization",

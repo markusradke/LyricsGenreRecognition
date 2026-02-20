@@ -16,37 +16,66 @@ class GenreClassifierTrainer:
 
     def __init__(
         self,
-        X_train: pd.DataFrame,
+        X_train: pd.DataFrame | pd.Series,
         y_train: pd.Series,
         random_state: int = 42,
         n_jobs: int = 1,
+        extractor: Any | None = None,
+        artist_train: pd.Series | None = None,
     ) -> None:
         """Initialize trainer.
 
         Args:
+            X_train: Training features (DataFrame) or raw lyrics (Series if extractor provided)
+            y_train: Training labels
             random_state: Random seed for reproducibility
             n_jobs: Number of parallel jobs
+            extractor: Optional sklearn transformer (FSExtractor or MonroeExtractor)
+            artist_train: Artist metadata (required if extractor provided)
         """
         self.X_train = X_train
         self.y_train = y_train
         self.random_state = random_state
         self.n_jobs = n_jobs
+        self.extractor = extractor
+        self.artist_train = artist_train
         self.best_pipeline_ = None
         self.best_params_ = None
         self.coefficients_ = None
         self.tuning_history_ = None
 
+        if extractor is not None and artist_train is None:
+            raise ValueError("artist_train required when extractor is provided")
+
     def _create_pipeline(self, params: dict[str, Any]) -> ImbPipeline:
         """Create pipeline from parameters.
 
         Args:
-            params: Pipeline parameters (may include C, l1_ratio, target_ratio). Adaptive sampler is only added
-                    when target ratio is provided in params.
+            params: Pipeline parameters. May include extractor params (alpha_*)
+                    and classifier params (C, l1_ratio, target_ratio).
 
         Returns:
             Configured pipeline. Always employs class-weighted loss.
         """
-        steps = [("scaler", StandardScaler())]
+        steps = []
+
+        # Add extractor as first step if provided
+        if self.extractor is not None:
+            # Extract extractor-specific params
+            extractor_params = {
+                k: v
+                for k, v in params.items()
+                if k.startswith("alpha_")
+                or k in ["z_threshold", "apply_fdr", "fdr_level"]
+            }
+            # Clone extractor with updated params
+            from sklearn.base import clone
+
+            extractor_clone = clone(self.extractor)
+            extractor_clone.set_params(**extractor_params)
+            steps.append(("extractor", extractor_clone))
+
+        steps.append(("scaler", StandardScaler()))
 
         if params.get("target_ratio") is not None:
             steps.append(
@@ -137,9 +166,57 @@ class GenreClassifierTrainer:
             checkpoint_dir=checkpoint_dir,
         )
 
-        self.tuning_history_ = optimizer.run_search(
-            self._create_pipeline, self.X_train, self.y_train
-        )
+        # Create custom fit function if extractor is in pipeline
+        if self.extractor is not None:
+
+            def pipeline_factory_with_artist(params):
+                pipeline = self._create_pipeline(params)
+
+                # Wrap pipeline to pass artist during fit
+                class PipelineWithArtist:
+                    def __init__(self, pipeline, artist):
+                        self.pipeline = pipeline
+                        self.artist = artist
+
+                    def fit(self, X, y):
+                        # Fit extractor with artist metadata
+                        self.pipeline.named_steps["extractor"].fit(
+                            X, y, artist=self.artist
+                        )
+                        # Fit rest of pipeline
+                        X_transformed = self.pipeline.named_steps[
+                            "extractor"
+                        ].transform(X)
+                        # Create pipeline without extractor for remaining steps
+                        from imblearn.pipeline import Pipeline as ImbPipeline
+
+                        remaining_steps = [
+                            (name, step)
+                            for name, step in self.pipeline.steps
+                            if name != "extractor"
+                        ]
+                        remaining_pipeline = ImbPipeline(remaining_steps)
+                        remaining_pipeline.fit(X_transformed, y)
+                        # Rebuild full pipeline
+                        for name, step in remaining_pipeline.named_steps.items():
+                            self.pipeline.named_steps[name] = step
+                        return self.pipeline
+
+                    def predict(self, X):
+                        return self.pipeline.predict(X)
+
+                    def score(self, X, y):
+                        return self.pipeline.score(X, y)
+
+                return PipelineWithArtist(pipeline, self.artist_train)
+
+            self.tuning_history_ = optimizer.run_search(
+                pipeline_factory_with_artist, self.X_train, self.y_train
+            )
+        else:
+            self.tuning_history_ = optimizer.run_search(
+                self._create_pipeline, self.X_train, self.y_train
+            )
 
         print("Selecting best parameters according to 1-SE rule...")
         self.best_params_ = optimizer.select_best_one_se(

@@ -1,9 +1,7 @@
 import pandas as pd
-import numpy as np
 from helpers.LyricsClassficationExperiment import LyricsClassificationExperiment
-
 from helpers.config import (
-    MIN_ARTISTS, 
+    MIN_ARTISTS,
     GENRE_CATEGORIES,
     N_BAYESIAN_ITER,
     N_BAYESIAN_INITIAL,
@@ -12,20 +10,14 @@ from helpers.config import (
     CV_FOLDS,
     N_JOBS,
     MONROE_PARAM_SPACE_3D,
-    MONROE_PARAM_SPACE_6D,
     get_genre_column,
     RANDOM_SEED,
     TEST_SIZE,
 )
-from src.helpers.config import N_JOBS
 
-
-print("Loading English corpus...")
 english = pd.read_csv(
     "data/poptrag_lyrics_genres_corpus_filtered_english_lemmatized.csv"
 )
-
-print("Running informed n-gram experiments...")
 
 
 def run_experiment(corpus, granularity):
@@ -34,19 +26,21 @@ def run_experiment(corpus, granularity):
         genrecol=get_genre_column(granularity),
         lyricscol="lyrics_lemmatized",
         artistcol="track.s.firstartist.name",
-        output_dir=f"models/cat{granularity}_informed_ngram_experiment",
+        yearcol="album.s.releaseyear",
+        output_dir=f"models/cat{granularity}_monroe_3d_experiment",
         test_size=TEST_SIZE,
         random_state=RANDOM_SEED,
     )
-    exp.compute_informed_ngram_features(min_artists=MIN_ARTISTS)
+    exp.compute_monroe_ngram_features(min_artists=MIN_ARTISTS, mode="3D")
     exp.tune_and_train_logistic_regression(
-        param_space=MONROE_PARAM_SPACE_3D, 
+        param_space=MONROE_PARAM_SPACE_3D,
         cv=CV_FOLDS,
         n_initial=N_BAYESIAN_INITIAL,
         n_iterations=N_BAYESIAN_ITER,
         stop_iter=STOP_ITER,
         uncertain_jump=UNCERTAIN_JUMP,
-        n_jobs=N_JOBS
+        n_jobs=N_JOBS,
+        use_pipeline=True,
     )
     exp.save_experiment()
 

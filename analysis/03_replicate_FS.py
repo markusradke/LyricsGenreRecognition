@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from helpers.LyricsClassficationExperiment import LyricsClassificationExperiment
 from helpers.config import (
-    MIN_ARTISTS, 
+    MIN_ARTISTS,
     TOP_VOCAB_PER_GENRE,
     GENRE_CATEGORIES,
     N_BAYESIAN_ITER,
@@ -12,7 +12,7 @@ from helpers.config import (
     UNCERTAIN_JUMP,
     CV_FOLDS,
     N_JOBS,
-    DEFAULT_PARAM_SPACE,
+    FS_PARAM_SPACE,
     get_genre_column,
     RANDOM_SEED,
     TEST_SIZE,
@@ -32,17 +32,18 @@ def run_experiment(corpus, granularity):
         test_size=TEST_SIZE,
         random_state=RANDOM_SEED,
     )
-    exp.compute_fs_ngram_features(
-        min_artists=MIN_ARTISTS, top_n_per_genre_and_ngram=TOP_VOCAB_PER_GENRE
+    exp.compute_fs_ngram_features_pipeline(
+        min_artists=MIN_ARTISTS, top_vocab_per_genre=TOP_VOCAB_PER_GENRE
     )
     exp.tune_and_train_logistic_regression(
-        param_space=DEFAULT_PARAM_SPACE,
+        param_space=FS_PARAM_SPACE,
         cv=CV_FOLDS,
         n_initial=N_BAYESIAN_INITIAL,
         n_iterations=N_BAYESIAN_ITER,
         stop_iter=STOP_ITER,
         uncertain_jump=UNCERTAIN_JUMP,
         n_jobs=N_JOBS,
+        use_pipeline=True,
     )
     exp.save_experiment()
 
