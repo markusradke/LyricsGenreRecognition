@@ -2,7 +2,7 @@ pyproject.toml
 src/helpers/BoundaryStripper.py
 src/helpers/CorpusLemmatizer.py
 src/helpers/GenreClassifierTrainer.py
-src/helpers/ExpressionExtractor.py
+src/helpers/InformedExtractor.py
 src/helpers/LyricsClassficationExperiment.py
 src/helpers/LyricsClassificationMetrics.py
 src/helpers/NGramFeatureExctractorFS.py

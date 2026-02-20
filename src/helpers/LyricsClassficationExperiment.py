@@ -13,7 +13,7 @@ from helpers.split_group_stratified_and_join import (
 )
 from helpers.LyricsClassificationMetrics import LyricsClassificationMetrics
 from helpers.NGramFeatureExctractorFS import NGramFeatureExtractorFS
-from helpers.ExpressionExtractor import ExpressionExtractor
+from helpers.InformedExtractor import InformedExtractor
 from helpers.TopicFeatureExtractor import TopicFeatureExtractor
 from helpers.GenreClassifierTrainer import GenreClassifierTrainer
 
@@ -131,7 +131,7 @@ class LyricsClassificationExperiment:
         llr_threshold=10,
         top_n_per_ngram_pergenre=300,
     ):
-        ngram_extractor = ExpressionExtractor(
+        ngram_extractor = InformedExtractor(
             min_artists=min_artists,
             min_tracks=min_tracks,
             llr_treshold=llr_threshold,

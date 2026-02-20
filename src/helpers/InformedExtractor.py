@@ -18,7 +18,7 @@ from sklearn.feature_extraction.text import CountVectorizer
 from helpers.StopwordFilter import StopwordFilter
 
 
-class ExpressionExtractor:
+class InformedExtractor:
     """Extract phrases using LLR-scored n-grams and TF-IDF ranking."""
 
     def __init__(
@@ -477,7 +477,7 @@ if __name__ == "__main__":
     )
     english = english.sample(1000, random_state=42)
 
-    extractor = ExpressionExtractor(
+    extractor = InformedExtractor(
         min_artists=50,
         min_tracks=0,
         llr_treshold=10,
