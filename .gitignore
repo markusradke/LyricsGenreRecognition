@@ -12,6 +12,7 @@ notebooks/prototyping/models
 notebooks/prototyping/_old
 notebooks/prototyping/*_experiment
 DIARY.md
+TODO.md
 _old
 
 *.csv

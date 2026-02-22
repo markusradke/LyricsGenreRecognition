@@ -2,8 +2,6 @@ import pandas as pd
 import numpy as np
 import pickle
 
-from pandas import DataFrame, Series
-from typing import Dict
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report  # for the time being
 
@@ -12,13 +10,9 @@ from helpers.split_group_stratified_and_join import (
     plot_comparison_genre_distributions,
 )
 from helpers.LyricsClassificationMetrics import LyricsClassificationMetrics
-from helpers.NGramFeatureExctractorFS import NGramFeatureExtractorFS
 from helpers.FSExtractor import FSExtractor
 from helpers.MonroeExtractor import MonroeExtractor
-from helpers.InformedExtractor import InformedExtractor
 from helpers.GenreClassifierTrainer import GenreClassifierTrainer
-from helpers.FeatureCache import FeatureCache
-from helpers.config import MIN_ARTISTS, DEBUG_SAMPLE_SIZE
 
 
 class LyricsClassificationExperiment:
@@ -28,7 +22,6 @@ class LyricsClassificationExperiment:
         genrecol,
         lyricscol,
         artistcol,
-        yearcol,
         output_dir,
         test_size=0.2,
         random_state=42,
@@ -37,26 +30,16 @@ class LyricsClassificationExperiment:
         self.random_state = random_state
         self.output_dir = output_dir
         self.test_size = test_size
-        # Use DEBUG_SAMPLE_SIZE from config if subsample_debug not explicitly provided
-        self.subsample_debug = (
-            subsample_debug
-            if subsample_debug is not None
-            else (DEBUG_SAMPLE_SIZE or 1.0)
-        )
+        self.subsample_debug = subsample_debug if subsample_debug is not None else 1.0
         self.corpus_train, self.corpus_test = self._prepare_corpus(
-            corpus, genrecol, lyricscol, artistcol, yearcol
+            corpus, genrecol, lyricscol, artistcol
         )
-        self.corpus_train_replaced = (
-            self.corpus_train
-        )  # initilaize for direct topic modelling
-        self.corpus_test_replced = self.corpus_test
         self.granularity = self.corpus_train["genre"].nunique()
         self.random_performance_baseline = self._compute_random_baseline()
         self.X_train = None
         self.y_train = self.corpus_train["genre"]
         self.y_test = self.corpus_test["genre"]
         self.model = None
-        self.feature_cache = FeatureCache(cache_dir=f"{self.output_dir}/feature_cache")
 
     def __str__(self):
         out = (
@@ -81,13 +64,12 @@ class LyricsClassificationExperiment:
 
         return out
 
-    def _prepare_corpus(self, corpus, genrecol, lyricscol, artistcol, yearcol):
-        selected = corpus[[genrecol, lyricscol, artistcol, yearcol]].rename(
+    def _prepare_corpus(self, corpus, genrecol, lyricscol, artistcol):
+        selected = corpus[[genrecol, lyricscol, artistcol]].rename(
             {
                 genrecol: "genre",
                 lyricscol: "lyrics",
                 artistcol: "artist",
-                yearcol: "releaseyear",
             },
             axis=1,
         )
@@ -122,112 +104,30 @@ class LyricsClassificationExperiment:
         y_pred = pd.Series(sampled, index=y_test.index, name="pred")
         return LyricsClassificationMetrics(y_test, y_pred)
 
-    def _compute_features_with_cache(
-        self, extractor_class, extractor_name, feature_description, **extractor_kwargs
-    ):
-        """
-        Generic method to compute features with caching.
-        Handles both FS and Informed extractors.
-        """
-        cache_key = self.feature_cache._compute_hash(
-            extractor_name,
-            self.corpus_train["lyrics"].values.tobytes(),
-            **extractor_kwargs,
-        )
-
-        cached = self.feature_cache.get(cache_key)
-        if cached is not None:
-            print(f"{extractor_name} features loaded from cache")
-            self.X_train = cached["X_train"]
-            self.X_test = cached["X_test"]
-            self.ngram_extractor = cached["extractor"]
-            self.feature_type = feature_description
-
-            if "corpus_train_replaced" in cached:
-                self.corpus_train_replaced = cached["corpus_train_replaced"]
-                self.corpus_test_replaced = cached["corpus_test_replaced"]
-            return
-
-        print(f"Extracting {extractor_name} features (not cached)...")
-        ngram_extractor = extractor_class(**extractor_kwargs)
-
-        fit_result = ngram_extractor.fit_transform(self.corpus_train)
-        if isinstance(fit_result, tuple):
-            self.X_train, self.corpus_train_replaced = fit_result
-        else:
-            self.X_train = fit_result
-
-        self.ngram_extractor = ngram_extractor
-
-        transform_result = ngram_extractor.transform(
-            self.corpus_test["lyrics"]
-            if hasattr(self.corpus_test, "lyrics")
-            else self.corpus_test
-        )
-        if isinstance(transform_result, tuple):
-            self.X_test, self.corpus_test_replaced = transform_result
-        else:
-            self.X_test = transform_result
-
-        self.feature_type = feature_description
-
-        cache_data = {
-            "X_train": self.X_train,
-            "X_test": self.X_test,
-            "extractor": self.ngram_extractor,
-        }
-
-        if (
-            hasattr(self, "corpus_train_replaced")
-            and self.corpus_train_replaced is not self.corpus_train
-        ):
-            cache_data["corpus_train_replaced"] = self.corpus_train_replaced
-            cache_data["corpus_test_replaced"] = self.corpus_test_replaced
-
-        self.feature_cache.set(cache_key, cache_data)
-
-    def compute_fs_ngram_features(self, min_artists=50, top_n_per_genre_and_ngram=100):
-        self._compute_features_with_cache(
-            extractor_class=NGramFeatureExtractorFS,
-            extractor_name="NGramFeatureExtractorFS",
-            feature_description=f"Fell-Spohrleder (2014) N-grams (top {top_n_per_genre_and_ngram} (per genre and ngram type), min. {min_artists} artists)",
-            min_artists=min_artists,
-            top_n=top_n_per_genre_and_ngram,
-            random_state=self.random_state,
-        )
-
-    def compute_informed_ngram_features(
+    def compute_fs_ngram_features(
         self,
-        min_artists=50,
-        min_tracks=0,
-        llr_threshold=10,
-        top_n_per_ngram_pergenre=300,
-    ):
-        self._compute_features_with_cache(
-            extractor_class=InformedExtractor,
-            extractor_name="InformedExtractor",
-            feature_description=f"Informed N-grams (top {top_n_per_ngram_pergenre} per genre, min. {min_artists} artists, min. {min_tracks})",
-            min_artists=min_artists,
-            min_tracks=min_tracks,
-            llr_threshold=llr_threshold,
-            top_vocab_per_genre=top_n_per_ngram_pergenre,
-        )
-
-    def compute_fs_ngram_features_pipeline(
-        self,
-        min_artists=MIN_ARTISTS,
+        min_artists=20,
         top_vocab_per_genre=100,
         use_stopword_filter=True,
         include_unigrams=True,
     ):
-        """Create FSExtractor for pipeline-based training (refactored approach)."""
+        """Extract FS ngram features from corpus."""
         self.extractor = FSExtractor(
             min_artists=min_artists,
             top_vocab_per_genre=top_vocab_per_genre,
             use_stopword_filter=use_stopword_filter,
-            include_unigrams=include_unigrams,
+            checkpoint_dir=self.output_dir + "/FSExtractor_checkpoints",
             random_state=self.random_state,
         )
+
+        self.extractor.fit(
+            self.corpus_train["lyrics"],
+            self.corpus_train["genre"],
+            self.corpus_train["artist"],
+        )
+        self.X_train = self.extractor.transform(self.corpus_train["lyrics"])
+        self.X_test = self.extractor.transform(self.corpus_test["lyrics"])
+
         unigrams_str = "with unigrams" if include_unigrams else "phrases only"
         stopwords_str = (
             "stopwords filtered" if use_stopword_filter else "stopwords kept"
@@ -237,45 +137,42 @@ class LyricsClassificationExperiment:
 
     def compute_monroe_ngram_features(
         self,
-        min_artists=MIN_ARTISTS,
-        mode="3D",
+        min_artists=20,
         use_stopword_filter=True,
         include_unigrams=True,
-        **monroe_kwargs,
+        p_value=0.001,
+        prior_strength=0.5,
     ):
         """Create MonroeExtractor for pipeline-based training.
 
         Args:
             min_artists: Minimum artists threshold
-            mode: '3D' (single alpha) or '6D' (per-order alphas)
-            use_stopword_filter: Whether to filter stopword-only n-grams
             include_unigrams: Whether to include unigrams (False = phrases only)
-            **monroe_kwargs: Additional Monroe parameters (z_threshold, apply_fdr, etc.)
+            use_stopword_filter: Whether to filter stopword-only n-grams
+            p_value: P-value threshold for feature selection (default 0.001)
+            prior_strength: Strength of Bayesian prior (default 0.5)
         """
-        # Set default alphas based on mode
-        if mode == "3D":
-            default_params = {
-                "alpha_unigram": 1.0,
-                "alpha_bigram": 1.0,
-                "alpha_trigram": 1.0,
-                "alpha_quadgram": 1.0,
-            }
-        else:  # 6D mode with separate alphas
-            default_params = {}
 
-        # Merge with provided kwargs
-        extractor_params = {**default_params, **monroe_kwargs}
-        extractor_params["min_artists"] = min_artists
-        extractor_params["use_stopword_filter"] = use_stopword_filter
-        extractor_params["include_unigrams"] = include_unigrams
-        extractor_params["random_state"] = self.random_state
+        self.extractor = MonroeExtractor(
+            min_artists=min_artists,
+            p_value=p_value,
+            prior_strength=prior_strength,
+            checkpoint_dir=self.output_dir + "/MonroeExtractor_checkpoints",
+            use_stopword_filter=use_stopword_filter,
+        )
+        self.X_train = self.extractor.fit(
+            self.corpus_train["lyrics"],
+            self.corpus_train["genre"],
+            self.corpus_train["artist"],
+        )
+        self.X_train = self.extractor.transform(self.corpus_train["lyrics"])
+        self.X_test = self.extractor.transform(self.corpus_test["lyrics"])
 
-        self.extractor = MonroeExtractor(**extractor_params)
         unigrams_str = "with unigrams" if include_unigrams else "phrases only"
         stopwords_str = (
             "stopwords filtered" if use_stopword_filter else "stopwords kept"
         )
-        self.feature_type = f"Monroe N-grams ({mode}, min {min_artists} artists, {unigrams_str}, {stopwords_str}, FDR={'on' if extractor_params.get('apply_fdr', True) else 'off'})"
+        self.feature_type = f"Monroe N-grams (min {min_artists} artists, {unigrams_str}, {stopwords_str}, p={p_value} (FDR correction), prior_strength={prior_strength})"
         print(f"MonroeExtractor configured: {self.feature_type}")
 
     def _ensure_features(self):
@@ -284,44 +181,27 @@ class LyricsClassificationExperiment:
                 "Features not computed. Call compute_fs_ngram_features() first."
             )
 
-    def _create_trainer(self, n_jobs=None, use_pipeline=False):
+    def _create_trainer(self, n_jobs=None):
         """Create trainer with optional pipeline mode.
 
         Args:
             n_jobs: Number of parallel jobs
-            use_pipeline: If True, use extractor-in-pipeline mode (requires self.extractor)
         """
-        if use_pipeline:
-            if not hasattr(self, "extractor") or self.extractor is None:
-                raise ValueError(
-                    "use_pipeline=True requires calling compute_*_features_pipeline() first"
-                )
-            # Pass raw lyrics and extractor to trainer
-            if n_jobs is None:
-                return GenreClassifierTrainer(
-                    self.corpus_train["lyrics"],
-                    self.y_train,
-                    self.random_state,
-                    extractor=self.extractor,
-                    artist_train=self.corpus_train["artist"],
-                )
+        feature_names = self.extractor.get_feature_names_out().tolist()
+        if n_jobs is None:
             return GenreClassifierTrainer(
-                self.corpus_train["lyrics"],
+                self.X_train,
                 self.y_train,
                 self.random_state,
-                n_jobs,
-                extractor=self.extractor,
-                artist_train=self.corpus_train["artist"],
+                feature_names=feature_names,
             )
-        else:
-            # Original behavior: use pre-extracted features
-            if n_jobs is None:
-                return GenreClassifierTrainer(
-                    self.X_train, self.y_train, self.random_state
-                )
-            return GenreClassifierTrainer(
-                self.X_train, self.y_train, self.random_state, n_jobs
-            )
+        return GenreClassifierTrainer(
+            self.X_train,
+            self.y_train,
+            self.random_state,
+            n_jobs,
+            feature_names=feature_names,
+        )
 
     def _fit_and_store_results(self, trainer, method_name, *args, **kwargs):
         fit_fn = getattr(trainer, method_name)
@@ -360,9 +240,7 @@ class LyricsClassificationExperiment:
             parsimony_param="C",
         )
 
-    def train_fixed_parametrer_logistic_regression(
-        self, C=1.0, l1_ratio=0.5, target_ratio=3.0
-    ):
+    def train_fixed_parametrer_logistic_regression(self, C=1.0, l1_ratio=0.5):
         self._ensure_features()
         trainer = self._create_trainer()
         self._fit_and_store_results(
@@ -370,7 +248,6 @@ class LyricsClassificationExperiment:
             "fit_with_fixed_params",
             C=C,
             l1_ratio=l1_ratio,
-            target_ratio=target_ratio,
         )
         results = trainer.get_results()
         self.model = results["pipeline"]

@@ -5,10 +5,11 @@ MIN_ARTISTS = 20  # Min. # of artists for an ngram / phrase
 TOP_VOCAB_PER_GENRE = 100  # FS Baseline
 
 # Monroe method settings
-MONROE_Z_THRESHOLD = 2.326  # One-sided test at alpha=0.01
+MONROE_P_VALUE = 0.001  # One-sided test at alpha=0.01
+MONROE_PRIOR_STRENGTH = 0.5  # Strength of prior in log-odds calculation
 EXTRACT_WITHIN_LINES = True  # Extract n-grams within line boundaries
 
-# Feature extraction toggles
+# Feature extraction toggles for Monroe method
 ENABLE_STOPWORD_FILTER = False  # Set False to disable stopword filtering
 INCLUDE_UNIGRAMS = True  # Set False for phrase-only experiments (bigrams+)
 
@@ -33,27 +34,6 @@ N_JOBS = 30
 
 # Classifier-only parameter space (for FS baseline)
 CLASSIFIER_PARAM_SPACE = {
-    "C": (-3.0, 2.0),  # Log scale: 10^-3 to 10^2
+    "C": (-3.0, 2.0),  # Log scale: 0.001 to 100
     "l1_ratio": (0.0, 1.0),
-}
-
-# FS baseline uses classifier params only
-FS_PARAM_SPACE = CLASSIFIER_PARAM_SPACE
-
-# Monroe-specific param spaces (3D/6D modes)
-# Log scale for alpha: 10^-2 to 10^1
-MONROE_PARAM_SPACE_3D = {
-    "alpha_unigram": (-2.0, 1.0),
-    "alpha_bigram": (-2.0, 1.0),
-    "alpha_trigram": (-2.0, 1.0),
-    "alpha_quadgram": (-2.0, 1.0),
-    **CLASSIFIER_PARAM_SPACE,
-}
-
-MONROE_PARAM_SPACE_6D = {
-    "alpha_unigram": (-2.0, 1.0),
-    "alpha_bigram": (-2.0, 1.0),
-    "alpha_trigram": (-2.0, 1.0),
-    "alpha_quadgram": (-2.0, 1.0),
-    **CLASSIFIER_PARAM_SPACE,
 }

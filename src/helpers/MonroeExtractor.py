@@ -1,480 +1,370 @@
-"""Monroe "Fightin' Words" n-gram extractor as sklearn transformer."""
+"""
+Monroe et al. (2008) n-gram feature extraction with fighting words method.
+
+Implements discriminating n-gram selection using Bayesian-smoothed log-odds
+ratios with empirical Bayes priors estimated from the full corpus.
+
+Reference:
+    Monroe, B. L., Colaresi, M. P., & Quinn, K. M. (2008).
+    Fightin' Words: Lexical Feature Selection and Evaluation for
+    Identifying the Content of Political Conflict.
+    Political Analysis, 16(4), 372-403.
+"""
 
 import pandas as pd
 import numpy as np
-import joblib
-from pathlib import Path
-from collections import defaultdict
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.feature_extraction.text import CountVectorizer
-from scipy.sparse import csr_matrix
+import random
+import pickle
 
-from .config import (
-    MIN_ARTISTS,
-    MONROE_Z_THRESHOLD,
-    EXTRACT_WITHIN_LINES,
-    ENABLE_STOPWORD_FILTER,
-    INCLUDE_UNIGRAMS,
-)
-from .StopwordFilter import StopwordFilter
-from . import monroe_logodds
-from . import ngram_utils
+from pathlib import Path
+from joblib import hash as joblib_hash
+from scipy.stats import norm
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.base import BaseEstimator, TransformerMixin
+
+from .config import MIN_ARTISTS, ENABLE_STOPWORD_FILTER
+from .monroe_logodds import compute_monroe_statistics, apply_fdr_correction
 
 
 class MonroeExtractor(BaseEstimator, TransformerMixin):
     """
-    Monroe log-odds n-gram extractor with Dirichlet smoothing.
+    Monroe et al. n-gram extractor with fighting words z-scores.
 
-    Extracts genre-discriminating n-grams using Bayesian-smoothed log-odds
-    ratios. Addresses sparsity issues via Dirichlet priors.
+    Extracts unigrams, bigrams, and trigrams using Dirichlet-smoothed log-odds
+    ratios. Uses empirical Bayes prior estimated from full corpus frequencies.
+    Checkpoints z-scores for all n-grams to allow p-value threshold exploration.
 
     Parameters
     ----------
     min_artists : int, default=MIN_ARTISTS
-        Minimum artists threshold for n-gram inclusion.
-    alpha_unigram : float, default=1.0
-        Dirichlet prior for unigrams.
-    alpha_bigram : float, default=1.0
-        Dirichlet prior for bigrams.
-    alpha_trigram : float, default=1.0
-        Dirichlet prior for trigrams.
-    alpha_quadgram : float, default=1.0
-        Dirichlet prior for quadgrams.
-    z_threshold : float, default=2.326
-        Z-score threshold for feature selection (one-sided, alpha=0.01).
-    extract_within_lines : bool, default=True
-        Extract n-grams within line boundaries only.
-    apply_fdr : bool, default=True
-        Apply Benjamini-Hochberg FDR correction for multiple testing.
-    fdr_level : float, default=0.01
-        False discovery rate level.
+        Minimum number of unique artists that must use an n-gram for inclusion.
+    p_value : float, default=0.01
+        Significance level for one-sided z-test (FDR-corrected).
+    prior_strength : float, default=0.01
+        Dirichlet prior strength (alpha). Lower values = stronger smoothing.
     use_stopword_filter : bool, default=ENABLE_STOPWORD_FILTER
         Whether to filter stopword-only n-grams.
-    include_unigrams : bool, default=INCLUDE_UNIGRAMS
-        Whether to include unigrams in vocabulary. Set False for phrase-only.
     random_state : int, default=42
-        Random seed.
+        Random seed for reproducibility.
+    checkpoint_dir : str or Path, optional
+        Directory to store checkpoints. If None, no checkpointing.
+
+    Attributes
+    ----------
+    vocabulary_ : list of str
+        Selected n-gram vocabulary passing significance threshold.
+    vectorizer_ : CountVectorizer
+        Fitted vectorizer for transforming new data.
+    z_scores_df_ : pd.DataFrame
+        All computed z-scores with columns ['ngram', 'genre', 'z_score',
+        'z_fdr_corrected', 'passes_fdr'] - checkpointed for p-value exploration.
+    _cache_key : str or None
+        Joblib hash of input data for checkpointing (computed during fit).
+    _is_fitted : bool
+        Whether the extractor has been fitted.
     """
 
     def __init__(
         self,
         min_artists: int = MIN_ARTISTS,
-        alpha_unigram: float = 1.0,
-        alpha_bigram: float = 1.0,
-        alpha_trigram: float = 1.0,
-        alpha_quadgram: float = 1.0,
-        z_threshold: float = MONROE_Z_THRESHOLD,
-        extract_within_lines: bool = EXTRACT_WITHIN_LINES,
-        apply_fdr: bool = True,
-        fdr_level: float = 0.01,
+        p_value: float = 0.01,
+        prior_strength: float = 0.01,
         use_stopword_filter: bool = ENABLE_STOPWORD_FILTER,
-        include_unigrams: bool = INCLUDE_UNIGRAMS,
         random_state: int = 42,
+        checkpoint_dir: str = None,
     ):
         self.min_artists = min_artists
-        self.alpha_unigram = alpha_unigram
-        self.alpha_bigram = alpha_bigram
-        self.alpha_trigram = alpha_trigram
-        self.alpha_quadgram = alpha_quadgram
-        self.z_threshold = z_threshold
-        self.extract_within_lines = extract_within_lines
-        self.apply_fdr = apply_fdr
-        self.fdr_level = fdr_level
+        self.p_value = p_value
+        self.prior_strength = prior_strength
         self.use_stopword_filter = use_stopword_filter
-        self.include_unigrams = include_unigrams
         self.random_state = random_state
+        self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
         self._is_fitted = False
-        self._cache_dir = Path("data/cache/monroe")
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
-        self._last_cache_key = None
+
+        if self.checkpoint_dir:
+            self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def fit(self, X, y, artist=None):
-        """Learn vocabulary from training data."""
+        """
+        Learn vocabulary from training data.
+
+        Parameters
+        ----------
+        X : pd.Series or array-like
+            Lyrics text, one entry per track.
+        y : pd.Series or np.ndarray
+            Genre labels for each track.
+        artist : pd.Series, optional
+            Artist names for each track. Required for min_artists filtering.
+
+        Returns
+        -------
+        self : MonroeExtractor
+            Fitted extractor.
+
+        Raises
+        ------
+        ValueError
+            If artist parameter is None.
+        """
         if artist is None:
-            raise ValueError("MonroeExtractor requires 'artist' metadata")
+            raise ValueError(
+                "MonroeExtractor requires 'artist' metadata for min_artists filtering"
+            )
 
         X = pd.Series(X).reset_index(drop=True)
         y = pd.Series(y).reset_index(drop=True)
         artist = pd.Series(artist).reset_index(drop=True)
 
-        # Initialize stopword filter conditionally
-        self.stopword_filter_ = StopwordFilter() if self.use_stopword_filter else None
-        self.genres_ = sorted(y.unique())
+        self._cache_key = self._compute_cache_key(X, y, artist)
 
-        # Check for cached counts (cross-trial optimization)
-        cache_key = self._compute_cache_key(X, y, artist)
-        if cache_key == self._last_cache_key:
-            print("Using cached counts from previous fit (same data/config)")
+        if self.checkpoint_dir:
+            if self._load_checkpoint():
+                print(f"Loaded z-scores from checkpoint: {self._cache_key[:8]}...")
+                self._is_fitted = True
+                return self._select_vocabulary_by_pvalue(self.p_value)
+            print("No checkpoint found, computing z-scores from scratch...")
         else:
-            cache_file = self._cache_dir / f"{cache_key}.pkl"
-            if cache_file.exists():
-                print(f"Loading cached counts from disk (key: {cache_key[:8]}...)")
-                cached_data = joblib.load(cache_file)
-                self._cached_tokens = cached_data["tokens"]
-                self._cached_ngrams_by_order = cached_data["ngrams"]
-                self._cached_counts_by_order = cached_data["counts"]
-                self._last_cache_key = cache_key
-            else:
-                print(
-                    "Computing and caching filtered n-grams (first time for this config)..."
-                )
-                # Cache tokenization and n-gram extraction
-                self._tokenize_corpus(X)
-                self._extract_ngrams_once()
-                # Cache filtered n-grams and counts
-                self._cached_counts_by_order = {}
-                self._cache_filtered_ngrams_and_counts(X, y, artist)
-                # Save to disk
-                joblib.dump(
-                    {
-                        "tokens": self._cached_tokens,
-                        "ngrams": self._cached_ngrams_by_order,
-                        "counts": self._cached_counts_by_order,
-                    },
-                    cache_file,
-                )
-                print(f"Cached to disk (key: {cache_key[:8]}...)")
-                self._last_cache_key = cache_key
+            print("Checkpoint directory not specified, computing z-scores...")
 
-        self.vocabulary_ = self._extract_vocabulary(X, y, artist)
+        orders_to_extract = [(1, "unigrams"), (2, "bigrams"), (3, "trigrams")]
+        order_names = [name for _, name in orders_to_extract]
 
-        # Create vectorizer
-        vocab_strings = ["_".join(ng) for ng in self.vocabulary_]
-        self.vectorizer_ = CountVectorizer(
-            vocabulary=vocab_strings,
-            token_pattern=r"\b[\w']+\b",
-            lowercase=True,
-            ngram_range=(1, 4),
+        print("Extracting n-grams for all orders...")
+        matrices = {}
+        features = {}
+        for order, name in orders_to_extract:
+            mat, feats = self._extract_ngrams(X, order, name)
+            matrices[name] = mat
+            features[name] = feats
+
+        print("Counting unique artists per n-gram...")
+        artist_counts_by_order = {
+            name: self._count_artists_per_ngram(artist, matrices[name], features[name])
+            for name in order_names
+        }
+
+        print("Filtering n-grams by minimum artist threshold...")
+        filtered_features = {}
+        filtered_matrices = {}
+        for name in order_names:
+            mask = np.array(
+                [
+                    artist_counts_by_order[name][ng] >= self.min_artists
+                    for ng in features[name]
+                ]
+            )
+            filtered_features[name] = features[name][mask]
+            filtered_matrices[name] = matrices[name][:, mask]
+            print(f"  {name}: {len(filtered_features[name]):,} n-grams retained")
+
+        print("Computing Monroe z-scores with empirical Bayes prior...")
+        self.z_scores_df_ = self._compute_all_zscores(
+            y, filtered_matrices, filtered_features
         )
 
-        # Fit to learn mappings (required by sklearn)
-        self._fit_vectorizer_with_replaced_ngrams(X)
+        print(f"Total n-grams scored: {len(self.z_scores_df_['ngram'].unique()):,}")
 
-        self._is_fitted = True
-        return self
+        if self.checkpoint_dir:
+            self._save_checkpoint()
+            print(f"Saved checkpoint: {self._cache_key[:8]}...")
+
+        return self._select_vocabulary_by_pvalue(self.p_value)
 
     def transform(self, X):
         """Transform lyrics to n-gram count matrix."""
-        if not self._is_fitted:
+        if not hasattr(self, "vocabulary_") or not self._is_fitted:
             raise ValueError("Must call fit() before transform()")
 
         X = pd.Series(X).reset_index(drop=True)
-
-        # Replace n-grams in each document
-        replaced = X.apply(lambda text: self._replace_ngrams(text))
-
-        return self.vectorizer_.transform(replaced)
+        return self.vectorizer_.transform(X)
 
     def get_feature_names_out(self, input_features=None):
-        """Get feature names."""
-        if not self._is_fitted:
+        """Get feature names for output features."""
+        if not hasattr(self, "vectorizer_") or not self._is_fitted:
             raise ValueError("Must call fit() before get_feature_names_out()")
+
         return self.vectorizer_.get_feature_names_out()
 
-    def update_alpha_and_recompute_vocabulary(self, X, **new_alphas):
-        """Quickly recompute vocabulary with new alpha values.
+    def update_pvalue_threshold(self, new_p_value):
+        """Reselect vocabulary with new p-value without recomputing z-scores.
 
-        Uses cached filtered n-grams and count statistics, only recomputes
-        Monroe scores and thresholding. Useful for fast alpha exploration.
+        Uses checkpointed z-scores to quickly explore different significance
+        thresholds without expensive recomputation.
 
         Parameters
         ----------
-        X : pd.Series
-            Training corpus (must be same as original fit).
-        **new_alphas : float
-            New alpha values (e.g., alpha_unigram=0.5, alpha_bigram=2.0).
-            Unspecified alphas retain their current values.
+        new_p_value : float
+            New significance level (e.g., 0.05, 0.01, 0.001).
 
         Returns
         -------
         self : MonroeExtractor
-            Fitted extractor with updated vocabulary.
-
-        Example
-        -------
-        >>> extractor.fit(X_train, y_train, artist_train)
-        >>> extractor.update_alpha_and_recompute_vocabulary(
-        ...     X_train, alpha_unigram=0.1, alpha_bigram=5.0
-        ... )
+            Extractor with updated vocabulary.
         """
-        if not hasattr(self, "_cached_counts_by_order"):
+        if not hasattr(self, "z_scores_df_"):
             raise ValueError(
-                "Must call fit() before update_alpha_and_recompute_vocabulary(). "
-                "Cached counts not available."
+                "Must call fit() before update_pvalue_threshold(). "
+                "Z-scores not computed."
             )
 
-        # Update alpha values
-        for key, value in new_alphas.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
-            else:
-                raise ValueError(f"Invalid alpha parameter: {key}")
+        print(f"Updating vocabulary with p-value threshold: {new_p_value}")
+        self.p_value = new_p_value
+        return self._select_vocabulary_by_pvalue(new_p_value)
 
-        print(f"Recomputing vocabulary with updated alphas: {new_alphas}")
+    def _select_vocabulary_by_pvalue(self, p_value):
+        """Select vocabulary based on p-value threshold."""
+        z_threshold = norm.ppf(1 - p_value)
 
-        # Recompute vocabulary using cached counts (fast!)
-        all_ngrams = []
-        for order in [1, 2, 3, 4]:
-            alpha = getattr(
-                self,
-                f"alpha_{'unigram' if order == 1 else 'bigram' if order == 2 else 'trigram' if order == 3 else 'quadgram'}",
-            )
-            ngrams = self._score_cached_ngrams(order, alpha)
-            all_ngrams.extend(ngrams)
-            print(f"  {order}-grams: {len(ngrams)} discriminating")
+        significant = self.z_scores_df_[
+            self.z_scores_df_["passes_fdr"]
+            & (self.z_scores_df_["z_score"] > z_threshold)
+        ]
 
-        print(f"Total vocabulary (Monroe): {len(all_ngrams)}")
-        self.vocabulary_ = all_ngrams
+        self.vocabulary_ = list(significant["ngram"].unique())
+        print(
+            f"Selected vocabulary size: {len(self.vocabulary_):,} n-grams (p={p_value})"
+        )
 
-        # Rebuild vectorizer with new vocabulary
-        vocab_strings = ["_".join(ng) for ng in self.vocabulary_]
         self.vectorizer_ = CountVectorizer(
-            vocabulary=vocab_strings,
+            vocabulary=self.vocabulary_,
             token_pattern=r"\b[\w']+\b",
             lowercase=True,
-            ngram_range=(1, 4),
+            ngram_range=(1, 3),
         )
 
-        X_series = pd.Series(X).reset_index(drop=True)
-        self._fit_vectorizer_with_replaced_ngrams(X_series)
-
+        self._is_fitted = True
         return self
 
-    def _score_cached_ngrams(self, order, alpha):
-        """Score cached n-grams with given alpha (fast path)."""
-        cache = self._cached_counts_by_order.get(order)
-        if cache is None:
-            return []
+    def _compute_all_zscores(self, genres, matrices, features):
+        """Compute Monroe z-scores for all n-grams across all genres.
 
-        filtered_ngrams = cache["filtered_ngrams"]
-        y_gc = cache["y_gc"]
-        n_c = cache["n_c"]
-        y_g = cache["y_g"]
-        n = cache["n"]
-        m = cache["m"]
+        Implements multi-class extension of Monroe et al.'s method:
+        - Empirical Bayes prior from corpus-wide frequencies
+        - One-vs-rest comparison for each genre
+        - FDR correction for multiple testing
+        """
+        unique_genres = sorted(genres.unique())
+        num_genres = len(unique_genres)
 
-        # Compute Monroe scores (only step that depends on alpha)
-        alpha_array = np.full(len(filtered_ngrams), alpha)
-        delta = monroe_logodds.compute_log_odds_delta(y_gc, n_c, y_g, n, m, alpha_array)
-        variance = monroe_logodds.compute_variance(y_gc, n_c, y_g, n, m, alpha_array)
-        z_scores = monroe_logodds.compute_z_scores(delta, variance)
+        results = []
 
-        # Filter by threshold
-        discriminating_df = monroe_logodds.filter_discriminating_ngrams(
-            z_scores,
-            ["_".join(ng) for ng in filtered_ngrams],
-            self.genres_,
-            threshold=self.z_threshold,
-            apply_fdr=self.apply_fdr,
-            fdr_level=self.fdr_level,
-        )
+        for name in ["unigrams", "bigrams", "trigrams"]:
+            matrix = matrices[name]
+            ngrams = features[name]
 
-        # Return unique n-grams
-        unique_ngrams = discriminating_df["ngram"].unique()
-        return [tuple(ng.split("_")) for ng in unique_ngrams]
+            if len(ngrams) == 0:
+                continue
 
-    def _extract_vocabulary(self, X, y, artist):
-        """Extract discriminating n-grams via Monroe method."""
-        all_ngrams = []
+            corpus_counts = np.array(matrix.sum(axis=0)).flatten()
+            total_corpus_counts = corpus_counts.sum()
 
-        # Determine orders to process based on include_unigrams flag
-        orders = [2, 3, 4] if not self.include_unigrams else [1, 2, 3, 4]
+            priors = self.prior_strength * (corpus_counts / total_corpus_counts)
 
-        for order in orders:
-            alpha = getattr(
-                self,
-                f"alpha_{'unigram' if order == 1 else 'bigram' if order == 2 else 'trigram' if order == 3 else 'quadgram'}",
+            genre_matrices = np.zeros((len(ngrams), num_genres))
+            genre_totals = np.zeros(num_genres)
+
+            for idx, genre in enumerate(unique_genres):
+                genre_mask = (genres == genre).values
+                genre_matrix = matrix[genre_mask, :]
+                genre_matrices[:, idx] = np.array(genre_matrix.sum(axis=0)).flatten()
+                genre_totals[idx] = genre_matrices[:, idx].sum()
+
+            _, _, z_scores = compute_monroe_statistics(
+                genre_matrices,
+                genre_totals,
+                corpus_counts,
+                total_corpus_counts,
+                len(ngrams),
+                priors,
             )
-            ngrams = self._extract_and_score_order(X, y, artist, order, alpha)
-            all_ngrams.extend(ngrams)
-            print(f"  {order}-grams: {len(ngrams)} discriminating")
 
-        print(f"Total vocabulary (Monroe): {len(all_ngrams)}")
-        return all_ngrams
+            for ng_idx, ngram in enumerate(ngrams):
+                for g_idx, genre in enumerate(unique_genres):
+                    results.append(
+                        {
+                            "ngram": ngram,
+                            "genre": genre,
+                            "z_score": z_scores[ng_idx, g_idx],
+                        }
+                    )
+
+        df = pd.DataFrame(results)
+
+        passes_fdr = apply_fdr_correction(
+            df["z_score"].values.reshape(-1, num_genres), self.p_value
+        )
+        df["passes_fdr"] = passes_fdr.flatten()
+        df["z_fdr_corrected"] = df["z_score"] * df["passes_fdr"]
+
+        return df
 
     def _compute_cache_key(self, X, y, artist):
-        """Compute cache key for persistent storage.
-
-        Hash includes data content and configuration parameters that affect
-        filtered n-grams and count statistics, but EXCLUDES alpha values
-        (which can be quickly recomputed using cached counts).
-        """
-        cache_tuple = (
+        """Compute hash for caching (excludes p_value for flexibility)."""
+        data_tuple = (
             tuple(X.index),
             tuple(X.values),
             tuple(y.values),
             tuple(artist.values),
             self.min_artists,
-            self.extract_within_lines,
-            self.z_threshold,
-            self.apply_fdr,
-            self.fdr_level,
+            self.prior_strength,
             self.use_stopword_filter,
-            self.include_unigrams,
             self.random_state,
         )
-        return joblib.hash(cache_tuple)
+        return joblib_hash(data_tuple)
 
-    def _tokenize_corpus(self, X):
-        """Tokenize corpus once and cache results."""
-        self._cached_tokens = [
-            ngram_utils.tokenize(text, self.extract_within_lines) for text in X
-        ]
-
-    def _extract_ngrams_once(self):
-        """Extract n-grams for all orders in single pass."""
-        self._cached_ngrams_by_order = {1: [], 2: [], 3: [], 4: []}
-
-        for tokens in self._cached_tokens:
-            ngrams_dict = ngram_utils.extract_ngrams_by_order(
-                tokens, [1, 2, 3, 4], self.extract_within_lines
-            )
-            for order in [1, 2, 3, 4]:
-                self._cached_ngrams_by_order[order].extend(ngrams_dict[order])
-
-    def _cache_filtered_ngrams_and_counts(self, X, y, artist):
-        """Cache filtered n-grams and count statistics per order.
-
-        This separates alpha-independent steps (filtering, counting) from
-        alpha-dependent steps (scoring). Enables fast alpha tuning.
-        """
-        for order in [1, 2, 3, 4]:
-            # Extract and filter n-grams (alpha-independent)
-            all_ngrams_set = set(self._cached_ngrams_by_order[order])
-            all_ngrams_list = list(all_ngrams_set)
-
-            if order > 1:
-                all_ngrams_list = ngram_utils.strip_boundary_ngrams(all_ngrams_list)
-
-            # Apply stopword filter conditionally
-            if self.use_stopword_filter:
-                all_ngrams_list = ngram_utils.filter_stopword_only(
-                    all_ngrams_list, self.stopword_filter_
-                )
-
-            # Filter by min_artists
-            artist_counts = ngram_utils.count_artists_per_ngram(
-                set(all_ngrams_list),
-                X,
-                artist,
-                self.extract_within_lines,
-                tokens_cache=self._cached_tokens,
-            )
-            filtered_ngrams = [
-                ng
-                for ng in all_ngrams_list
-                if artist_counts.get(ng, 0) >= self.min_artists
-            ]
-
-            if len(filtered_ngrams) == 0:
-                self._cached_counts_by_order[order] = None
-                continue
-
-            # Compute counts (alpha-independent)
-            y_gc, n_c, y_g, n, m = self._compute_counts(X, y, filtered_ngrams, order)
-
-            # Store everything needed for scoring
-            self._cached_counts_by_order[order] = {
-                "filtered_ngrams": filtered_ngrams,
-                "y_gc": y_gc,
-                "n_c": n_c,
-                "y_g": y_g,
-                "n": n,
-                "m": m,
-            }
-            print(f"  Cached {len(filtered_ngrams)} {order}-grams")
-
-    def _extract_and_score_order(self, X, y, artist, order, alpha):
-        """Extract and score n-grams of given order."""
-        # Use cached counts (already filtered and computed)
-        cache = self._cached_counts_by_order.get(order)
-        if cache is None:
-            return []
-
-        filtered_ngrams = cache["filtered_ngrams"]
-        y_gc = cache["y_gc"]
-        n_c = cache["n_c"]
-        y_g = cache["y_g"]
-        n = cache["n"]
-        m = cache["m"]
-
-        # Compute Monroe scores
-        alpha_array = np.full(len(filtered_ngrams), alpha)
-        delta = monroe_logodds.compute_log_odds_delta(y_gc, n_c, y_g, n, m, alpha_array)
-        variance = monroe_logodds.compute_variance(y_gc, n_c, y_g, n, m, alpha_array)
-        z_scores = monroe_logodds.compute_z_scores(delta, variance)
-
-        # Filter by threshold
-        discriminating_df = monroe_logodds.filter_discriminating_ngrams(
-            z_scores,
-            ["_".join(ng) for ng in filtered_ngrams],
-            self.genres_,
-            threshold=self.z_threshold,
-            apply_fdr=self.apply_fdr,
-            fdr_level=self.fdr_level,
+    def _extract_ngrams(self, texts, order, name):
+        """Extract n-grams using CountVectorizer."""
+        vectorizer = CountVectorizer(
+            ngram_range=(order, order),
+            token_pattern=r"\b[\w']+\b",
+            lowercase=True,
         )
+        matrix = vectorizer.fit_transform(texts)
+        features = vectorizer.get_feature_names_out()
 
-        # Return unique n-grams
-        unique_ngrams = discriminating_df["ngram"].unique()
-        return [tuple(ng.split("_")) for ng in unique_ngrams]
+        rng = random.Random(self.random_state)
+        sample = rng.sample(list(features), k=min(5, len(features)))
 
-    def _compute_counts(self, X, y, ngrams, order):
-        """Compute count matrices for Monroe formula."""
-        # Build genre-ngram count matrix
-        ngram_to_idx = {ng: i for i, ng in enumerate(ngrams)}
-        genre_to_idx = {g: i for i, g in enumerate(self.genres_)}
+        print(f"Extracted {name}:")
+        print(f"  - Unique: {len(features):,}")
+        print(f"  - Shape: {matrix.shape}")
+        print(f"  - Examples: {sample}")
 
-        y_gc = np.zeros((len(ngrams), len(self.genres_)))
+        return matrix, features
 
-        # Use cached tokens instead of re-tokenizing
-        for tokens, genre in zip(self._cached_tokens, y):
-            doc_ngrams = ngram_utils.extract_ngrams_by_order(
-                tokens, [order], self.extract_within_lines
-            )[order]
+    def _count_artists_per_ngram(self, artists, ngram_matrix, ngram_features):
+        """Count unique artists per n-gram."""
+        binary_matrix = (ngram_matrix > 0).astype(int).tocsc()
+        artist_series = artists.reset_index(drop=True)
+        artist_count = {}
 
-            for ng in doc_ngrams:
-                if ng in ngram_to_idx:
-                    y_gc[ngram_to_idx[ng], genre_to_idx[genre]] += 1
+        for ngram_idx, ngram in enumerate(ngram_features):
+            track_indices = binary_matrix[:, ngram_idx].nonzero()[0]
+            artist_count[ngram] = artist_series.iloc[track_indices].nunique()
+        print(f"Counted unique artists for {len(artist_count):,} n-grams")
 
-        # Compute other quantities
-        n_c = y_gc.sum(axis=0)  # Total tokens per genre
-        y_g = y_gc.sum(axis=1)  # Total count per n-gram
-        n = int(y_gc.sum())  # Total tokens
-        m = len(ngrams)  # Vocabulary size
+        return artist_count
 
-        return y_gc, n_c, y_g, n, m
+    def _get_checkpoint_paths(self):
+        """Get path for z-scores checkpoint file."""
+        zscores_path = self.checkpoint_dir / f"zscores_{self._cache_key}.pkl"
+        return zscores_path
 
-    def _fit_vectorizer_with_replaced_ngrams(self, X):
-        """Fit vectorizer on corpus with n-grams replaced."""
-        replaced = X.apply(lambda text: self._replace_ngrams(text))
-        self.vectorizer_.fit(replaced)
+    def _save_checkpoint(self):
+        """Save z-scores to checkpoint file."""
+        zscores_path = self._get_checkpoint_paths()
 
-    def _replace_ngrams(self, text):
-        """Replace n-grams with underscore-joined tokens."""
-        tokens = ngram_utils.tokenize(text, preserve_lines=False)
+        with open(zscores_path, "wb") as f:
+            pickle.dump(self.z_scores_df_, f)
 
-        # Greedy longest match: 4-grams → 3-grams → 2-grams
-        for order in [4, 3, 2]:
-            ngrams_to_replace = [ng for ng in self.vocabulary_ if len(ng) == order]
-            if not ngrams_to_replace:
-                continue
+    def _load_checkpoint(self):
+        """Load z-scores from checkpoint file if it exists."""
+        zscores_path = self._get_checkpoint_paths()
 
-            i = 0
-            new_tokens = []
-            while i < len(tokens):
-                matched = False
-                # Try to match n-gram at position i
-                for ng in ngrams_to_replace:
-                    if i + order <= len(tokens):
-                        candidate = tuple(tokens[i : i + order])
-                        if candidate == ng:
-                            new_tokens.append("_".join(ng))
-                            i += order
-                            matched = True
-                            break
-                if not matched:
-                    new_tokens.append(tokens[i])
-                    i += 1
-            tokens = new_tokens
+        if zscores_path.exists():
+            with open(zscores_path, "rb") as f:
+                self.z_scores_df_ = pickle.load(f)
+            return True
 
-        return " ".join(tokens)
+        return False

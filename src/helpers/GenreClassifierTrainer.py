@@ -22,6 +22,7 @@ class GenreClassifierTrainer:
         n_jobs: int = 1,
         extractor: Any | None = None,
         artist_train: pd.Series | None = None,
+        feature_names: list[str] | None = None,
     ) -> None:
         """Initialize trainer.
 
@@ -32,6 +33,7 @@ class GenreClassifierTrainer:
             n_jobs: Number of parallel jobs
             extractor: Optional sklearn transformer (FSExtractor or MonroeExtractor)
             artist_train: Artist metadata (required if extractor provided)
+            feature_names: Feature names for sparse matrices (auto-detected for DataFrames)
         """
         self.X_train = X_train
         self.y_train = y_train
@@ -43,6 +45,13 @@ class GenreClassifierTrainer:
         self.best_params_ = None
         self.coefficients_ = None
         self.tuning_history_ = None
+
+        if feature_names is not None:
+            self.feature_names_ = feature_names
+        elif hasattr(X_train, "columns"):
+            self.feature_names_ = X_train.columns.tolist()
+        else:
+            self.feature_names_ = [f"feature_{i}" for i in range(X_train.shape[1])]
 
         if extractor is not None and artist_train is None:
             raise ValueError("artist_train required when extractor is provided")
@@ -75,7 +84,7 @@ class GenreClassifierTrainer:
             extractor_clone.set_params(**extractor_params)
             steps.append(("extractor", extractor_clone))
 
-        steps.append(("scaler", StandardScaler()))
+        steps.append(("scaler", StandardScaler(with_mean=False)))
 
         if params.get("target_ratio") is not None:
             steps.append(
@@ -229,14 +238,13 @@ class GenreClassifierTrainer:
         self.best_pipeline_.fit(self.X_train, self.y_train)
 
         self.coefficients_ = self._extract_coefficients(
-            self.best_pipeline_, self.X_train.columns.tolist()
+            self.best_pipeline_, self.feature_names_
         )
 
     def fit_with_fixed_params(
         self,
         C: float = 1.0,
         l1_ratio: float = 0.5,
-        target_ratio: float = 3.0,
         cv: int | None = None,
     ) -> None:
         """Train model with fixed hyperparameters.
@@ -251,7 +259,6 @@ class GenreClassifierTrainer:
         self.best_params_ = {
             "C": C,
             "l1_ratio": l1_ratio,
-            "target_ratio": target_ratio,
         }
 
         print("Training pipeline with fixed parameters...")
@@ -259,7 +266,7 @@ class GenreClassifierTrainer:
 
         self.best_pipeline_.fit(self.X_train, self.y_train)
         self.coefficients_ = self._extract_coefficients(
-            self.best_pipeline_, self.X_train.columns.tolist()
+            self.best_pipeline_, self.feature_names_
         )
 
     def get_results(self) -> dict:
