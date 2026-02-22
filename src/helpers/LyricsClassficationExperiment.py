@@ -141,7 +141,7 @@ class LyricsClassificationExperiment:
         use_stopword_filter=True,
         include_unigrams=True,
         p_value=0.001,
-        prior_strength=0.5,
+        prior_concentration=0.5,
     ):
         """Create MonroeExtractor for pipeline-based training.
 
@@ -150,15 +150,16 @@ class LyricsClassificationExperiment:
             include_unigrams: Whether to include unigrams (False = phrases only)
             use_stopword_filter: Whether to filter stopword-only n-grams
             p_value: P-value threshold for feature selection (default 0.001)
-            prior_strength: Strength of Bayesian prior (default 0.5)
+            prior_concentration: Strength of Bayesian prior (default 0.5)
         """
 
         self.extractor = MonroeExtractor(
             min_artists=min_artists,
             p_value=p_value,
-            prior_strength=prior_strength,
+            prior_concentration=prior_concentration,
             checkpoint_dir=self.output_dir + "/MonroeExtractor_checkpoints",
             use_stopword_filter=use_stopword_filter,
+            include_unigrams=include_unigrams,
         )
         self.X_train = self.extractor.fit(
             self.corpus_train["lyrics"],
@@ -172,7 +173,7 @@ class LyricsClassificationExperiment:
         stopwords_str = (
             "stopwords filtered" if use_stopword_filter else "stopwords kept"
         )
-        self.feature_type = f"Monroe N-grams (min {min_artists} artists, {unigrams_str}, {stopwords_str}, p={p_value} (FDR correction), prior_strength={prior_strength})"
+        self.feature_type = f"Monroe N-grams (min {min_artists} artists, {unigrams_str}, {stopwords_str}, p={p_value} (FDR correction), prior_concentration={prior_concentration})"
         print(f"MonroeExtractor configured: {self.feature_type}")
 
     def _ensure_features(self):

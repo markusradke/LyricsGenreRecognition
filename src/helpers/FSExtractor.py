@@ -8,7 +8,6 @@ Implements the baseline method from:
 
 import pandas as pd
 import numpy as np
-import random
 import pickle
 from pathlib import Path
 from joblib import hash as joblib_hash
@@ -17,6 +16,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from collections import defaultdict
 
 from .config import MIN_ARTISTS, ENABLE_STOPWORD_FILTER
+from .extractor_utils import count_artists_per_ngram, extract_ngrams
 
 
 class FSExtractor(BaseEstimator, TransformerMixin):
@@ -130,7 +130,7 @@ class FSExtractor(BaseEstimator, TransformerMixin):
         matrices = {}
         features = {}
         for order, name in orders_to_extract:
-            mat, feats = self._extract_ngrams(X, order, name)
+            mat, feats = extract_ngrams(X, order, name, self.random_state)
             matrices[name] = mat
             features[name] = feats
 
@@ -142,7 +142,7 @@ class FSExtractor(BaseEstimator, TransformerMixin):
 
         print("Counting unique artists per n-gram...")
         artist_counts_by_order = {
-            name: self._count_artists_per_ngram(artist, matrices[name], features[name])
+            name: count_artists_per_ngram(artist, matrices[name], features[name])
             for name in order_names
         }
 
@@ -236,26 +236,6 @@ class FSExtractor(BaseEstimator, TransformerMixin):
         )
         return joblib_hash(data_tuple)
 
-    def _extract_ngrams(self, texts, order, name):
-        """Extract n-grams using CountVectorizer."""
-        vectorizer = CountVectorizer(
-            ngram_range=(order, order),
-            token_pattern=r"\b[\w']+\b",
-            lowercase=True,
-        )
-        matrix = vectorizer.fit_transform(texts)
-        features = vectorizer.get_feature_names_out()
-
-        rng = random.Random(self.random_state)
-        sample = rng.sample(list(features), k=min(5, len(features)))
-
-        print(f"Extracted {name}:")
-        print(f"  - Unique: {len(features):,}")
-        print(f"  - Shape: {matrix.shape}")
-        print(f"  - Examples: {sample}")
-
-        return matrix, features
-
     def _calculate_genre_tfidf(self, genres, ngram_matrix, ngram_features):
         """Compute genre-level TF-IDF for n-grams."""
         binary_matrix = (ngram_matrix > 0).astype(int).tocoo()
@@ -299,19 +279,6 @@ class FSExtractor(BaseEstimator, TransformerMixin):
         print(f"Calculated TF-IDF for {len(results):,} genre-ngram pairs")
 
         return pd.DataFrame(results)
-
-    def _count_artists_per_ngram(self, artists, ngram_matrix, ngram_features):
-        """Count unique artists per n-gram."""
-        binary_matrix = (ngram_matrix > 0).astype(int).tocsc()
-        artist_series = artists.reset_index(drop=True)
-        artist_count = {}
-
-        for ngram_idx, ngram in enumerate(ngram_features):
-            track_indices = binary_matrix[:, ngram_idx].nonzero()[0]
-            artist_count[ngram] = artist_series.iloc[track_indices].nunique()
-        print(f"Counted unique artists for {len(artist_count):,} n-grams")
-
-        return artist_count
 
     def _select_top_ngrams(self, ranked_tfidf):
         """Select top n-grams per genre across all orders."""

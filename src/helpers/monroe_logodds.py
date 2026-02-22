@@ -18,6 +18,23 @@ from scipy.stats import norm
 from typing import List
 
 
+def compute_pvalues_from_zscores(z_scores: np.ndarray) -> np.ndarray:
+    """
+    Convert z-scores to one-sided p-values.
+
+    Parameters
+    ----------
+    z_scores : np.ndarray
+        Z-scores from statistical tests.
+
+    Returns
+    -------
+    p_values : np.ndarray
+        One-sided p-values (upper tail test).
+    """
+    return 1 - norm.cdf(z_scores)
+
+
 def compute_monroe_statistics(
     y_gc: np.ndarray,
     n_c: np.ndarray,
@@ -75,24 +92,30 @@ def compute_monroe_statistics(
     return delta, variance, z_scores
 
 
-def apply_fdr_correction(z_scores: np.ndarray, fdr_level: float = 0.01) -> np.ndarray:
+def apply_benjamini_hochberg_correction(
+    p_values: np.ndarray, fdr: float = 0.01
+) -> tuple[np.ndarray, np.ndarray]:
     """
-    Apply Benjamini-Hochberg FDR correction to z-scores.
+    Apply Benjamini-Hochberg FDR correction to p-values.
 
-    Controls false discovery rate when performing many simultaneous tests
-    (e.g., m n-grams x k genres tests).
+    Implements the BH procedure:
+    1. Sort p-values from low to high: p_1 <= p_2 <= ... <= p_m
+    2. Find largest rank r where p_r <= fdr * (r/m)
+    3. Reject all hypotheses with ranks 1, 2, ..., r
 
     Parameters
     ----------
-    z_scores : np.ndarray, shape (n_ngrams, n_genres)
-        Z-scores for each (n-gram, genre) pair.
-    fdr_level : float, default=0.01
-        Desired false discovery rate (proportion of false positives).
+    p_values : np.ndarray, shape (n_tests,) or (n_ngrams, n_genres)
+        P-values from statistical tests.
+    fdr : float, default=0.01
+        Desired false discovery rate (e.g., 0.01 = 1% FDR).
 
     Returns
     -------
-    passes_fdr : np.ndarray, shape (n_ngrams, n_genres)
-        Boolean mask indicating which tests pass FDR correction.
+    passes_bh : np.ndarray, same shape as p_values
+        Boolean mask indicating which tests pass BH correction.
+    bh_threshold : np.ndarray, same shape as p_values
+        BH threshold value for each test (fdr * rank / m).
 
     Notes
     -----
@@ -100,79 +123,37 @@ def apply_fdr_correction(z_scores: np.ndarray, fdr_level: float = 0.01) -> np.nd
     a practical and powerful approach to multiple hypothesis testing.
     J R Stat Soc B 57:289-300
     """
-    p_values = 1 - norm.cdf(z_scores.flatten())
+    original_shape = p_values.shape
+    p_flat = p_values.flatten()
+    m = len(p_flat)
 
-    m = len(p_values)
-    sorted_idx = np.argsort(p_values)
-    sorted_p = p_values[sorted_idx]
+    # Sort p-values and track original indices
+    sorted_idx = np.argsort(p_flat)
+    sorted_p = p_flat[sorted_idx]
 
-    comparisons = sorted_p <= fdr_level * np.arange(1, m + 1) / m
+    # Compute BH thresholds for each rank: fdr * (r/m)
+    ranks = np.arange(1, m + 1)
+    bh_thresholds = fdr * ranks / m
+
+    # Find largest rank where p_r <= fdr * (r/m)
+    comparisons = sorted_p <= bh_thresholds
 
     if comparisons.any():
-        threshold_p = sorted_p[comparisons.nonzero()[0][-1]]
-        passes = p_values <= threshold_p
+        # Find the highest rank that passes
+        max_significant_rank = np.where(comparisons)[0][-1]
+        # All ranks up to and including this rank are significant
+        passes_sorted = np.zeros(m, dtype=bool)
+        passes_sorted[: max_significant_rank + 1] = True
     else:
-        passes = np.zeros(m, dtype=bool)
+        # No tests pass correction
+        passes_sorted = np.zeros(m, dtype=bool)
 
-    return passes.reshape(z_scores.shape)
+    # Unsort back to original order
+    passes_bh = np.empty(m, dtype=bool)
+    passes_bh[sorted_idx] = passes_sorted
 
+    # Map thresholds back to original order
+    bh_threshold_array = np.empty(m)
+    bh_threshold_array[sorted_idx] = bh_thresholds
 
-def filter_discriminating_ngrams(
-    z_scores: np.ndarray,
-    ngram_names: List[str],
-    genre_names: List[str],
-    threshold: float = 2.326,
-    apply_fdr: bool = True,
-    fdr_level: float = 0.01,
-) -> pd.DataFrame:
-    """
-    Filter n-grams by z-score threshold (one-sided test).
-
-    Default threshold 2.326 corresponds to one-sided test at alpha=0.01
-    (uncorrected). With apply_fdr=True, uses Benjamini-Hochberg correction
-    to control false discovery rate across multiple tests.
-
-    Parameters
-    ----------
-    z_scores : np.ndarray, shape (n_ngrams, n_genres)
-        Z-scores for each (n-gram, genre) pair.
-    ngram_names : List[str]
-        N-gram identifiers (e.g., ["love", "dark side"]).
-    genre_names : List[str]
-        Genre labels.
-    threshold : float, default=2.326
-        Z-score threshold (one-sided, alpha=0.01). Ignored if apply_fdr=True.
-    apply_fdr : bool, default=True
-        If True, apply Benjamini-Hochberg FDR correction instead of
-        fixed threshold. Recommended for academic rigor with large
-        feature spaces (m x k tests).
-    fdr_level : float, default=0.01
-        False discovery rate level (only used if apply_fdr=True).
-
-    Returns
-    -------
-    discriminating : pd.DataFrame
-        DataFrame with columns ['ngram', 'genre', 'z_score']
-        for n-grams passing threshold in each genre.
-
-    Notes
-    -----
-    Multiple testing: With m n-grams and k genres, we perform m×k tests.
-    Without correction, expect α * m * k false positives. FDR correction
-    controls the proportion of false positives among selected features.
-    """
-    if apply_fdr:
-        passes_fdr = apply_fdr_correction(z_scores, fdr_level)
-        ngram_idx, genre_idx = np.where(passes_fdr & (z_scores > 0))
-    else:
-        ngram_idx, genre_idx = np.where(z_scores > threshold)
-
-    discriminating = pd.DataFrame(
-        {
-            "ngram": [ngram_names[i] for i in ngram_idx],
-            "genre": [genre_names[j] for j in genre_idx],
-            "z_score": z_scores[ngram_idx, genre_idx],
-        }
-    )
-
-    return discriminating
+    return passes_bh.reshape(original_shape), bh_threshold_array.reshape(original_shape)
