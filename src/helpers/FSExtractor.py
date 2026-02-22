@@ -9,13 +9,14 @@ Implements the baseline method from:
 import pandas as pd
 import numpy as np
 import random
+import pickle
+from pathlib import Path
 from joblib import hash as joblib_hash
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.base import BaseEstimator, TransformerMixin
 from collections import defaultdict
-from scipy.sparse import csr_matrix
 
-from .config import MIN_ARTISTS, ENABLE_STOPWORD_FILTER, INCLUDE_UNIGRAMS
+from .config import MIN_ARTISTS, ENABLE_STOPWORD_FILTER
 
 
 class FSExtractor(BaseEstimator, TransformerMixin):
@@ -36,10 +37,11 @@ class FSExtractor(BaseEstimator, TransformerMixin):
         order (unigrams, bigrams, trigrams).
     use_stopword_filter : bool, default=ENABLE_STOPWORD_FILTER
         Whether to filter stopword-only n-grams.
-    include_unigrams : bool, default=INCLUDE_UNIGRAMS
-        Whether to include unigrams in vocabulary. Set False for phrase-only.
     random_state : int, default=42
         Random seed for reproducibility.
+    checkpoint_dir : str or Path, optional
+        Directory to store checkpoints of vocabulary and vectorizer.
+        If None, no checkpointing is used.
 
     Attributes
     ----------
@@ -48,7 +50,7 @@ class FSExtractor(BaseEstimator, TransformerMixin):
     vectorizer_ : CountVectorizer
         Fitted vectorizer for transforming new data.
     _cache_key : str or None
-        Joblib hash of input data for caching (computed during fit).
+        Joblib hash of input data for checkpointing (computed during fit).
     _is_fitted : bool
         Whether the extractor has been fitted.
     """
@@ -58,15 +60,18 @@ class FSExtractor(BaseEstimator, TransformerMixin):
         min_artists: int = MIN_ARTISTS,
         top_vocab_per_genre: int = 100,
         use_stopword_filter: bool = ENABLE_STOPWORD_FILTER,
-        include_unigrams: bool = INCLUDE_UNIGRAMS,
         random_state: int = 42,
+        checkpoint_dir: str = None,
     ):
         self.min_artists = min_artists
         self.top_vocab_per_genre = top_vocab_per_genre
         self.use_stopword_filter = use_stopword_filter
-        self.include_unigrams = include_unigrams
         self.random_state = random_state
+        self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
         self._is_fitted = False
+
+        if self.checkpoint_dir:
+            self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def fit(self, X, y, artist=None):
         """
@@ -103,23 +108,25 @@ class FSExtractor(BaseEstimator, TransformerMixin):
         y = pd.Series(y).reset_index(drop=True)
         artist = pd.Series(artist).reset_index(drop=True)
 
-        # Compute cache key for this data configuration
         self._cache_key = self._compute_cache_key(X, y, artist)
 
-        # Check if we've already computed vocabulary for this data
-        if hasattr(self, "vocabulary_") and hasattr(self, "_last_cache_key"):
-            if self._cache_key == self._last_cache_key:
-                print("Using cached vocabulary (identical data)")
+        if self.checkpoint_dir:
+            if self._load_checkpoint():
+                print(
+                    f"Loaded vocabulary and vectorizer from checkpoint: {self._cache_key[:8]}..."
+                )
+                self._is_fitted = True
                 return self
+            print(
+                f"No checkpoint found for hash {self._cache_key[:8]}..., computing vocabulary..."
+            )
+        else:
+            print("Checkpoint directory not specified, computing vocabulary...")
 
-        # Determine n-gram orders based on include_unigrams flag
-        orders_to_extract = [(2, "bigrams"), (3, "trigrams")]
-        if self.include_unigrams:
-            orders_to_extract = [(1, "unigrams")] + orders_to_extract
-
+        orders_to_extract = [(1, "unigrams"), (2, "bigrams"), (3, "trigrams")]
         order_names = [name for _, name in orders_to_extract]
 
-        # Extract n-grams for each order
+        print("Extracting n-grams for all orders...")
         matrices = {}
         features = {}
         for order, name in orders_to_extract:
@@ -127,19 +134,19 @@ class FSExtractor(BaseEstimator, TransformerMixin):
             matrices[name] = mat
             features[name] = feats
 
-        # Compute TF-IDF per genre
+        print("Calculating genre-level TF-IDF for n-grams...")
         tfidf_by_order = {
             name: self._calculate_genre_tfidf(y, matrices[name], features[name])
             for name in order_names
         }
 
-        # Count artists per n-gram
+        print("Counting unique artists per n-gram...")
         artist_counts_by_order = {
             name: self._count_artists_per_ngram(artist, matrices[name], features[name])
             for name in order_names
         }
 
-        # Filter by min_artists threshold
+        print("Filtering n-grams by minimum artist threshold and ranking by TF-IDF...")
         filtered_tfidf = {}
         for name in order_names:
             tfidf = tfidf_by_order[name]
@@ -150,21 +157,24 @@ class FSExtractor(BaseEstimator, TransformerMixin):
                 by=["genre", "tfidf"], ascending=[True, False]
             ).reset_index(drop=True)
 
-        # Select top-k per genre
+        print("Selecting top n-grams per genre and final vocabulary...")
         self.vocabulary_ = self._select_top_ngrams(filtered_tfidf)
+        print(f"Final vocabulary size: {len(self.vocabulary_):,} n-grams")
 
-        # Create vectorizer with final vocabulary
+        print("Fitting CountVectorizer with selected vocabulary...")
         self.vectorizer_ = CountVectorizer(
             vocabulary=list(self.vocabulary_),
             token_pattern=r"\b[\w']+\b",
             lowercase=True,
             ngram_range=(1, 3),
         )
-        self.vectorizer_.fit(X)  # Fit to learn internal mappings
+        self.vectorizer_.fit(X)
 
-        # Store cache key for future comparisons
-        self._last_cache_key = self._cache_key
         self._is_fitted = True
+
+        if self.checkpoint_dir:
+            self._save_checkpoint()
+            print(f"Saved checkpoint: {self._cache_key[:8]}...")
 
         return self
 
@@ -221,6 +231,7 @@ class FSExtractor(BaseEstimator, TransformerMixin):
             tuple(artist.values),
             self.min_artists,
             self.top_vocab_per_genre,
+            self.use_stopword_filter,
             self.random_state,
         )
         return joblib_hash(data_tuple)
@@ -285,6 +296,7 @@ class FSExtractor(BaseEstimator, TransformerMixin):
                         "tfidf": tf * ngram_idf[ngram],
                     }
                 )
+        print(f"Calculated TF-IDF for {len(results):,} genre-ngram pairs")
 
         return pd.DataFrame(results)
 
@@ -297,6 +309,7 @@ class FSExtractor(BaseEstimator, TransformerMixin):
         for ngram_idx, ngram in enumerate(ngram_features):
             track_indices = binary_matrix[:, ngram_idx].nonzero()[0]
             artist_count[ngram] = artist_series.iloc[track_indices].nunique()
+        print(f"Counted unique artists for {len(artist_count):,} n-grams")
 
         return artist_count
 
@@ -315,3 +328,34 @@ class FSExtractor(BaseEstimator, TransformerMixin):
         final = set.union(*top_sets) if top_sets else set()
         print(f"Total unique n-grams (FS): {len(final):,}")
         return final
+
+    def _get_checkpoint_paths(self):
+        """Get paths for vocabulary and vectorizer checkpoint files."""
+        vocab_path = self.checkpoint_dir / f"vocab_{self._cache_key}.pkl"
+        vectorizer_path = self.checkpoint_dir / f"vectorizer_{self._cache_key}.pkl"
+        return vocab_path, vectorizer_path
+
+    def _save_checkpoint(self):
+        """Save vocabulary and vectorizer to checkpoint files."""
+        vocab_path, vectorizer_path = self._get_checkpoint_paths()
+
+        with open(vocab_path, "wb") as f:
+            pickle.dump(self.vocabulary_, f)
+
+        with open(vectorizer_path, "wb") as f:
+            pickle.dump(self.vectorizer_, f)
+
+    def _load_checkpoint(self):
+        """Load vocabulary and vectorizer from checkpoint files if they exist."""
+        vocab_path, vectorizer_path = self._get_checkpoint_paths()
+
+        if vocab_path.exists() and vectorizer_path.exists():
+            with open(vocab_path, "rb") as f:
+                self.vocabulary_ = pickle.load(f)
+
+            with open(vectorizer_path, "rb") as f:
+                self.vectorizer_ = pickle.load(f)
+
+            return True
+
+        return False
