@@ -1,5 +1,9 @@
 import random
+
+from typing import List, Tuple
 from sklearn.feature_extraction.text import CountVectorizer
+
+from .StopwordFilter import StopwordFilter
 
 
 def extract_ngrams(texts, order, name, random_state):
@@ -39,3 +43,16 @@ def count_artists_per_ngram(artists, ngram_matrix, ngram_features):
     artist_count = dict(zip(ngram_features[counts.index], counts.values))
     print(f"Counted unique artists for {len(artist_count):,} n-grams")
     return artist_count
+
+
+def strip_boundary_ngrams(ngrams: List[Tuple[str, ...]]) -> List[Tuple[str, ...]]:
+    """Remove n-grams starting with articles or infinitive markers."""
+    banned_starts = {"a", "an", "the", "to"}
+    return [ng for ng in ngrams if ng and ng[0].lower() not in banned_starts]
+
+
+def filter_stopword_only(
+    ngrams: List[Tuple[str, ...]], stopword_filter: StopwordFilter
+) -> List[Tuple[str, ...]]:
+    """Remove n-grams containing only stopwords."""
+    return [ng for ng in ngrams if not stopword_filter.is_stopword_only(" ".join(ng))]

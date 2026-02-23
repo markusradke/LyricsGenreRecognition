@@ -20,8 +20,14 @@ from joblib import hash as joblib_hash
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.base import BaseEstimator, TransformerMixin
 
-from .config import MIN_ARTISTS, ENABLE_STOPWORD_FILTER
-from .extractor_utils import count_artists_per_ngram, extract_ngrams
+from .config import MIN_ARTISTS, ENABLE_STOPWORD_FILTER, ENABLE_BIGRAM_BOUNDARY_FILTER
+from .extractor_utils import (
+    count_artists_per_ngram,
+    extract_ngrams,
+    strip_boundary_ngrams,
+    filter_stopword_only,
+)
+from .StopwordFilter import StopwordFilter
 from .monroe_logodds import (
     compute_monroe_statistics,
     compute_pvalues_from_zscores,
@@ -73,6 +79,7 @@ class MonroeExtractor(BaseEstimator, TransformerMixin):
         p_value: float = 0.01,
         prior_concentration: float = 1.0,
         use_stopword_filter: bool = ENABLE_STOPWORD_FILTER,
+        use_bigram_boundary_filter: bool = ENABLE_BIGRAM_BOUNDARY_FILTER,
         include_unigrams: bool = True,
         random_state: int = 42,
         checkpoint_dir: str = None,
@@ -82,9 +89,13 @@ class MonroeExtractor(BaseEstimator, TransformerMixin):
         self.prior_concentration = prior_concentration
         self.include_unigrams = include_unigrams
         self.use_stopword_filter = use_stopword_filter
+        self.use_bigram_boundary_filter = use_bigram_boundary_filter
         self.random_state = random_state
         self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
         self._is_fitted = False
+
+        if self.use_stopword_filter:
+            self.stopword_filter_ = StopwordFilter()
 
         if self.checkpoint_dir:
             self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -172,9 +183,35 @@ class MonroeExtractor(BaseEstimator, TransformerMixin):
             filtered_matrices[name] = matrices[name][:, mask]
             print(f"  {name}: {len(filtered_features[name]):,} n-grams retained")
 
-        print(
-            "TODO: OPTIONALLY EXCLUDE STOPWORD-ONLY N-GRAMS HERE AND PERFORM BOUNDARY STRIPPING"
-        )
+        if self.use_stopword_filter:
+            print("Filtering stopword-only n-grams...")
+            for name in order_names:
+                ngram_tuples = [tuple(ng.split()) for ng in filtered_features[name]]
+                kept_ngrams = filter_stopword_only(ngram_tuples, self.stopword_filter_)
+                kept_strings = [" ".join(ng) for ng in kept_ngrams]
+
+                mask = np.array([ng in kept_strings for ng in filtered_features[name]])
+                filtered_features[name] = filtered_features[name][mask]
+                filtered_matrices[name] = filtered_matrices[name][:, mask]
+                print(f"  {name}: {len(filtered_features[name]):,} n-grams retained")
+
+        if self.use_bigram_boundary_filter:
+            print("Stripping boundary n-grams from bigrams...")
+            if "bigrams" in filtered_features:
+                bigram_tuples = [
+                    tuple(ng.split()) for ng in filtered_features["bigrams"]
+                ]
+                kept_bigrams = strip_boundary_ngrams(bigram_tuples)
+                kept_strings = [" ".join(ng) for ng in kept_bigrams]
+
+                mask = np.array(
+                    [ng in kept_strings for ng in filtered_features["bigrams"]]
+                )
+                filtered_features["bigrams"] = filtered_features["bigrams"][mask]
+                filtered_matrices["bigrams"] = filtered_matrices["bigrams"][:, mask]
+                print(
+                    f"  bigrams: {len(filtered_features['bigrams']):,} n-grams retained"
+                )
 
         print("Computing Monroe z-scores with empirical Bayes prior...")
         self.z_scores_df_ = self._compute_all_zscores(

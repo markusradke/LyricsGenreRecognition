@@ -11,6 +11,7 @@ EXTRACT_WITHIN_LINES = True  # Extract n-grams within line boundaries
 
 # Feature extraction toggles for Monroe method
 ENABLE_STOPWORD_FILTER = False  # Set False to disable stopword filtering
+ENABLE_BIGRAM_BOUNDARY_FILTER = False  # Set False to disable bigram boundary filtering
 INCLUDE_UNIGRAMS = True  # Set False for phrase-only experiments (bigrams+)
 
 # Sampling

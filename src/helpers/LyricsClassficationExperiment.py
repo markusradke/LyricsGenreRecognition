@@ -139,6 +139,7 @@ class LyricsClassificationExperiment:
         self,
         min_artists=20,
         use_stopword_filter=True,
+        use_bigram_boundary_filter=True,
         include_unigrams=True,
         p_value=0.001,
         prior_concentration=0.5,
@@ -159,6 +160,7 @@ class LyricsClassificationExperiment:
             prior_concentration=prior_concentration,
             checkpoint_dir=self.output_dir + "/MonroeExtractor_checkpoints",
             use_stopword_filter=use_stopword_filter,
+            use_bigram_boundary_filter=use_bigram_boundary_filter,
             include_unigrams=include_unigrams,
         )
         self.X_train = self.extractor.fit(
