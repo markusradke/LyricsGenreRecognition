@@ -247,6 +247,8 @@ class LyricsClassificationExperiment:
             n_jobs: Number of parallel jobs
         """
         feature_names = self.extractor.get_feature_names_out().tolist()
+        if len(feature_names) != self.X_train.shape[1]:
+            feature_names = None
         if n_jobs is None:
             return GenreClassifierTrainer(
                 self.X_train,
@@ -315,9 +317,17 @@ class LyricsClassificationExperiment:
         self.cv_tuning_history = pd.DataFrame()
 
     def save_experiment(self):
+        """Save experiment state, excluding non-picklable R objects."""
+        state = self.__dict__.copy()
+
+        if hasattr(self, "stm_modeler"):
+            state["stm_modeler"] = None
+
         with open(self.output_dir + "/complete_experiment.pkl", "wb") as f:
-            pickle.dump(self, f)
+            pickle.dump(state, f)
+
         print(f"Experiment saved to {self.output_dir}/complete_experiment.pkl")
+        print("Note: STM model saved separately in stm_model/ directory during tuning.")
 
     def show_train_test_genrefreq_comparison(self):
         plot_comparison_genre_distributions(
