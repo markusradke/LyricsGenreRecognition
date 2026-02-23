@@ -109,11 +109,11 @@ meta <- prep$meta
 search <- searchK(
   prep$documents,
   prep$vocab,
-  K = 16:20,
+  K = 2:20,
   prevalence = ~genre,
   data = meta,
   init.type = "Spectral",
-  heldout.seed = 32,
+  heldout.seed = 42,
 )
 
 # SEED 32 for Heldout:

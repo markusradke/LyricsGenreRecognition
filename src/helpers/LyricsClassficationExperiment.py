@@ -13,6 +13,8 @@ from helpers.LyricsClassificationMetrics import LyricsClassificationMetrics
 from helpers.FSExtractor import FSExtractor
 from helpers.MonroeExtractor import MonroeExtractor
 from helpers.GenreClassifierTrainer import GenreClassifierTrainer
+from helpers.aggregate_artist_dtm import aggregate_dtm_by_artist
+from helpers.STMTopicModeler import STMTopicModeler
 
 
 class LyricsClassificationExperiment:
@@ -177,6 +179,60 @@ class LyricsClassificationExperiment:
         )
         self.feature_type = f"Monroe N-grams (min {min_artists} artists, {unigrams_str}, {stopwords_str}, p={p_value} (FDR correction), prior_concentration={prior_concentration})"
         print(f"MonroeExtractor configured: {self.feature_type}")
+
+    def compute_stm_topic_features(self, k_range=(2, 20)):
+        """Compute topic features using Structural Topic Model.
+
+        Uses existing n-gram vocabulary to build artist-level DTM, tunes and fits
+        STM model with genre as prevalence covariate, then transforms tracks to
+        topic proportions.
+
+        Args:
+            k_range: Tuple (min_K, max_K) for topic number search
+        """
+        if not hasattr(self, "extractor") or self.X_train is None:
+            raise ValueError(
+                "No features computed. Call compute_monroe_ngram_features() or "
+                "compute_fs_ngram_features() first."
+            )
+
+        vocab = self.extractor.get_feature_names_out()
+        X_train_dtm = self.X_train
+
+        print("Aggregating track-level DTM to artist-level...")
+        X_artist, artist_genres = aggregate_dtm_by_artist(
+            X_train_dtm,
+            self.corpus_train["artist"],
+            self.corpus_train["genre"],
+        )
+        print(
+            f"Artist-level DTM: {X_artist.shape[0]} artists, {X_artist.shape[1]} features"
+        )
+
+        print("Initializing STM topic modeler...")
+        self.stm_modeler = STMTopicModeler(
+            k_range=k_range,
+            random_state=self.random_state,
+            model_dir=self.output_dir + "/stm_model",
+        )
+
+        print("Tuning and fitting STM model...")
+        self.stm_modeler.tune_and_fit(X_artist, artist_genres, vocab)
+
+        print("Transforming tracks to topic proportions...")
+        self.X_train = self.stm_modeler.transform(X_train_dtm, vocab)
+        X_test_dtm = self.extractor.transform(self.corpus_test["lyrics"])
+        self.X_test = self.stm_modeler.transform(X_test_dtm, vocab)
+
+        vocab_source = "Monroe" if "Monroe" in self.feature_type else "FS"
+        self.feature_type = (
+            f"STM Topics (K={self.stm_modeler.K_}, {vocab_source} vocab, "
+            f"artist-level training, genre prevalence covariate)"
+        )
+        print(f"STM features computed: {self.feature_type}")
+        print(
+            f"Feature matrix shape: Train {self.X_train.shape}, Test {self.X_test.shape}"
+        )
 
     def _ensure_features(self):
         if self.X_train is None:
