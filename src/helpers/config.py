@@ -6,7 +6,7 @@ TOP_VOCAB_PER_GENRE = 100  # FS Baseline
 
 # Monroe method settings
 MONROE_P_VALUE = 0.001  # One-sided test at alpha=0.01
-MONROE_prior_concentration = 0.5  # Strength of prior in log-odds calculation
+MONROE_PRIOR_CONCENTRATION = 0.5  # Strength of prior in log-odds calculation
 EXTRACT_WITHIN_LINES = True  # Extract n-grams within line boundaries
 
 # Feature extraction toggles for Monroe method

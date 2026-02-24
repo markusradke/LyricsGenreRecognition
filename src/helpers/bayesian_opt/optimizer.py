@@ -17,6 +17,7 @@ class BayesianOptimizer:
         param_space: dict[str, list[float]],
         n_initial: int = 20,
         n_iterations: int = 30,
+        n_points: int = 1,
         stop_iter: int = 10,
         uncertain_jump: int = 5,
         cv: int = 5,
@@ -31,17 +32,27 @@ class BayesianOptimizer:
             param_space: Parameter search space with ranges
             n_initial: Number of initial Latin hypercube samples
             n_iterations: Number of Bayesian optimization iterations
-            stop_iter: Number of iterations without improvement before early stopping
-            uncertain_jump: Interval for uncertainty-based exploration jumps
+            n_points: Number of candidates to evaluate in parallel per Bayesian
+                iteration. Each point counts individually toward stop_iter and
+                uncertain_jump. When >1, CV runs sequentially per candidate
+                (n_jobs workers are assigned to the outer parallel evaluation).
+            stop_iter: Number of individual evaluations without improvement
+                before early stopping
+            uncertain_jump: Number of individual evaluations without improvement
+                before an uncertainty-based exploration jump. If n_points > 1,
+                this is checked only after each batch, so the jump may be delayed
+                and applied to the complete next batch.
             cv: Number of cross-validation folds
             scoring: Scoring metric for evaluation
             random_state: Random seed for reproducibility
-            n_jobs: Number of parallel jobs for initial phase (-1 for all)
+            n_jobs: Number of parallel jobs. Used for the initial phase and for
+                evaluating n_points candidates in the Bayesian phase.
             checkpoint_dir: Directory for saving checkpoints (None to disable)
         """
         self.param_space = param_space
         self.n_initial = n_initial
         self.n_iterations = n_iterations
+        self.n_points = n_points
         self.cv = cv
         self.scoring = scoring
         self.random_state = random_state
@@ -134,6 +145,7 @@ class BayesianOptimizer:
             "param_space": self.param_space,
             "n_initial": self.n_initial,
             "n_iterations": self.n_iterations,
+            "n_points": self.n_points,
             "cv": self.cv,
             "scoring": self.scoring,
             "random_state": self.random_state,
