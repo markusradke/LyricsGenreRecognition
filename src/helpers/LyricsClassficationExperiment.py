@@ -279,20 +279,19 @@ class LyricsClassificationExperiment:
         cv=5,
         n_initial=20,
         n_iterations=50,
+        n_points=1,
         n_jobs=-1,
         stop_iter=10,
         uncertain_jump=5,
-        use_pipeline=False,
     ):
-        if not use_pipeline:
-            self._ensure_features()
         checkpoint_dir = self.output_dir + "/optimization_checkpoints"
-        trainer = self._create_trainer(n_jobs, use_pipeline=use_pipeline)
+        trainer = self._create_trainer(n_jobs)
         self._fit_and_store_results(
             trainer,
             "fit_with_bayesian_optimization",
             param_space,
             n_initial=n_initial,
+            n_points=n_points,
             n_iterations=n_iterations,
             stop_iter=stop_iter,
             uncertain_jump=uncertain_jump,
