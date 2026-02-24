@@ -39,7 +39,7 @@ class MonroeExtractor(BaseEstimator, TransformerMixin):
     """
     Monroe et al. n-gram extractor with fighting words z-scores.
 
-    Extracts unigrams, bigrams, and trigrams using Dirichlet-smoothed log-odds
+    Extracts unigrams, bigrams, trigrams, and quadgrams using Dirichlet-smoothed log-odds
     ratios. Uses empirical Bayes prior estimated from full corpus frequencies.
     Checkpoints z-scores for all n-grams to allow p-value threshold exploration.
 
@@ -53,6 +53,10 @@ class MonroeExtractor(BaseEstimator, TransformerMixin):
         Dirichlet prior strength (alpha). Lower values = stronger smoothing.
     use_stopword_filter : bool, default=ENABLE_STOPWORD_FILTER
         Whether to filter stopword-only n-grams.
+    use_bigram_boundary_filter : bool, default=ENABLE_BIGRAM_BOUNDARY_FILTER
+        Whether to filter bigrams that are subsets of unigrams.
+    include_unigrams : bool, default=True
+        Whether to include unigrams in the extraction (in addition to bigrams, trigrams, quadgrams).
     random_state : int, default=42
         Random seed for reproducibility.
     checkpoint_dir : str or Path, optional
@@ -245,7 +249,7 @@ class MonroeExtractor(BaseEstimator, TransformerMixin):
         """Reselect vocabulary with new p-value without recomputing z-scores.
 
         Uses checkpointed z-scores to quickly explore different significance
-        thresholds without expensive recomputation.
+        thresholds.
 
         Parameters
         ----------
@@ -272,14 +276,13 @@ class MonroeExtractor(BaseEstimator, TransformerMixin):
         if not hasattr(self, "z_scores_df_"):
             raise ValueError("Must compute z-scores first")
 
-        if p_value != self.p_value or "passes_bh" not in self.z_scores_df_.columns:
-            num_genres = len(self.z_scores_df_["genre"].unique())
-            p_matrix = self.z_scores_df_["p"].values.reshape(-1, num_genres)
-            passes_bh, bh_threshold = apply_benjamini_hochberg_correction(
-                p_matrix, fdr=p_value
-            )
-            self.z_scores_df_["passes_bh"] = passes_bh.flatten()
-            self.z_scores_df_["bh_threshold"] = bh_threshold.flatten()
+        num_genres = len(self.z_scores_df_["genre"].unique())
+        p_matrix = self.z_scores_df_["p"].values.reshape(-1, num_genres)
+        passes_bh, bh_threshold = apply_benjamini_hochberg_correction(
+            p_matrix, fdr=p_value
+        )
+        self.z_scores_df_["passes_bh"] = passes_bh.flatten()
+        self.z_scores_df_["bh_threshold"] = bh_threshold.flatten()
 
         significant = self.z_scores_df_[
             self.z_scores_df_["passes_bh"] & (self.z_scores_df_["z_score"] > 0)

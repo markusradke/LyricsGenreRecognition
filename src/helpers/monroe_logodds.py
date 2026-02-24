@@ -15,7 +15,6 @@ Reference:
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
-from typing import List
 
 
 def compute_pvalues_from_zscores(z_scores: np.ndarray) -> np.ndarray:

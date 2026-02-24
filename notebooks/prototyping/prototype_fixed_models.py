@@ -46,6 +46,7 @@ experiment_monroe.save_experiment()
 # experiment_monroe.show_top_coefficients_per_genre()
 
 experiment_stm = copy.deepcopy(experiment_monroe)
+experiment_stm.output_dir = "notebooks/prototyping/experiment_outputs/STM_Test"
 experiment_stm.compute_stm_topic_features(k_range=(2, 3))
 
 experiment_stm.train_fixed_parametrer_logistic_regression()

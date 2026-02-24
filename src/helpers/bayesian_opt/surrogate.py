@@ -84,7 +84,7 @@ def _generate_candidates(
     Returns:
         List of candidate parameter dictionaries
     """
-    return latin_hypercube_sample(param_space, 100, random_state + n_results)
+    return latin_hypercube_sample(param_space, 10000, random_state + n_results)
 
 
 def _select_best_candidate(
