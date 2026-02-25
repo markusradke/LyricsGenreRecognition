@@ -13,6 +13,12 @@ from pathlib import Path
 from scipy.sparse import issparse
 
 try:
+    import rpy2.rinterface_lib.embedded as r_embedded
+
+    r_embedded.set_initoptions(
+        ("rpy2", "--no-save", "--no-restore", "--max-ppsize=500000")
+    )
+
     import rpy2.robjects as ro
     from rpy2.robjects import pandas2ri
     from rpy2.robjects.packages import importr
@@ -175,25 +181,41 @@ class STMTopicModeler:
         """
         if issparse(X):
             X = X.tocsr()
+        else:
+            from scipy.sparse import csr_matrix
 
-        documents = []
-        for i in range(X.shape[0]):
-            row = X[i, :].toarray().flatten() if issparse(X) else X[i, :]
-            nonzero_idx = np.where(row > 0)[0]
+            X = csr_matrix(X)
 
-            if len(nonzero_idx) == 0:
-                doc_matrix = ro.r.matrix(ro.FloatVector([]), nrow=2, ncol=0)
-            else:
-                term_idx = nonzero_idx + 1
-                counts = row[nonzero_idx]
-                doc_matrix = ro.r.matrix(
-                    ro.FloatVector(np.concatenate([term_idx, counts])),
-                    nrow=2,
-                    byrow=True,
-                )
-            documents.append(doc_matrix)
+        ro.globalenv["._indptr"] = ro.IntVector((X.indptr).tolist())
+        ro.globalenv["._indices"] = ro.FloatVector(
+            (X.indices + 1).astype(float).tolist()
+        )
+        ro.globalenv["._data"] = ro.FloatVector(X.data.astype(float).tolist())
+        ro.globalenv["._n_docs"] = ro.IntVector([X.shape[0]])
 
-        documents = ro.r.list(*documents)
+        documents = ro.r(
+            """
+local({
+  n <- ._n_docs[1]
+  docs <- vector("list", n)
+  for (i in seq_len(n)) {
+    start <- ._indptr[i] + 1L
+    end   <- ._indptr[i + 1]
+    if (start > end) {
+      docs[[i]] <- matrix(numeric(0), nrow = 2L, ncol = 0L)
+    } else {
+      docs[[i]] <- matrix(
+        c(._indices[start:end], ._data[start:end]),
+        nrow = 2L, byrow = TRUE
+      )
+    }
+  }
+  docs
+})
+"""
+        )
+        for key in ("._indptr", "._indices", "._data", "._n_docs"):
+            ro.r(f"rm({key})")
 
         if genre is not None:
             with localconverter(ro.default_converter + pandas2ri.converter):

@@ -42,29 +42,45 @@ class LyricsClassificationExperiment:
         self.y_train = self.corpus_train["genre"]
         self.y_test = self.corpus_test["genre"]
         self.model = None
+        self.extraction_time = None
+        self.stm_time = None
+        self.training_time = None
 
     def __str__(self):
-        out = (
+        printout = (
             f"LyricsClassificationExperiment with {self.granularity} genres\n"
-            + "=============================================\n"
+            + "=" * 60
+            + f"Performed on {round(self.subsample_debug *100)}% of the data\n"
+            + "\n"
             + f"Train size: {self.corpus_train.shape[0]} samples\n"
             + f"Test size: {self.corpus_test.shape[0]} samples\n"
         )
         if self.X_train is None:
-            out += "Features not yet computed.\n"
+            printout += "Features not yet computed.\n"
         else:
-            out += (
+            printout += (
                 f"# of features: {self.X_train.shape[1]}\n"
+                + f"Extractor: {self.extractor.__class__.__name__}\n"
                 + f"Feature type: {self.feature_type}\n"
             )
-        if self.model is None:
-            out += "Model not yet trained.\n"
-        out += (
-            "=============================================\n"
-            + f"Output directory: {self.output_dir}\n"
-        )
+            printout += (
+                f"Extraction time: {self.extraction_time:.2f} min\n"
+                if self.extraction_time
+                else ""
+            )
+            printout += f"STM time: {self.stm_time:.2f} min\n" if self.stm_time else ""
 
-        return out
+        if self.model is None:
+            printout += "Model not yet trained.\n"
+        else:
+            printout += (
+                f"Training time: {self.training_time:.2f} min\n"
+                if self.training_time
+                else ""
+            )
+        printout += "=" * 60 + "\n" + f"Output directory: {self.output_dir}\n"
+
+        return printout
 
     def _prepare_corpus(self, corpus, genrecol, lyricscol, artistcol):
         selected = corpus[[genrecol, lyricscol, artistcol]].rename(
@@ -114,6 +130,7 @@ class LyricsClassificationExperiment:
         include_unigrams=True,
     ):
         """Extract FS ngram features from corpus."""
+        starttime = pd.Timestamp.now()
         self.extractor = FSExtractor(
             min_artists=min_artists,
             top_vocab_per_genre=top_vocab_per_genre,
@@ -129,6 +146,8 @@ class LyricsClassificationExperiment:
         )
         self.X_train = self.extractor.transform(self.corpus_train["lyrics"])
         self.X_test = self.extractor.transform(self.corpus_test["lyrics"])
+        endtime = pd.Timestamp.now()
+        self.extraction_time = (endtime - starttime).total_seconds() / 60
 
         unigrams_str = "with unigrams" if include_unigrams else "phrases only"
         stopwords_str = (
@@ -155,7 +174,7 @@ class LyricsClassificationExperiment:
             p_value: P-value threshold for feature selection (default 0.001)
             prior_concentration: Strength of Bayesian prior (default 0.5)
         """
-
+        starttime = pd.Timestamp.now()
         self.extractor = MonroeExtractor(
             min_artists=min_artists,
             p_value=p_value,
@@ -172,6 +191,8 @@ class LyricsClassificationExperiment:
         )
         self.X_train = self.extractor.transform(self.corpus_train["lyrics"])
         self.X_test = self.extractor.transform(self.corpus_test["lyrics"])
+        endtime = pd.Timestamp.now()
+        self.extraction_time = (endtime - starttime).total_seconds() / 60
 
         unigrams_str = "with unigrams" if include_unigrams else "phrases only"
         stopwords_str = (
@@ -196,6 +217,7 @@ class LyricsClassificationExperiment:
                 "compute_fs_ngram_features() first."
             )
 
+        starttime = pd.Timestamp.now()
         vocab = self.extractor.get_feature_names_out()
         X_train_dtm = self.X_train
 
@@ -224,6 +246,9 @@ class LyricsClassificationExperiment:
         X_test_dtm = self.extractor.transform(self.corpus_test["lyrics"])
         self.X_test = self.stm_modeler.transform(X_test_dtm, vocab)
 
+        endtime = pd.Timestamp.now()
+        self.stm_time = (endtime - starttime).total_seconds() / 60
+
         vocab_source = "Monroe" if "Monroe" in self.feature_type else "FS"
         self.feature_type = (
             f"STM Topics (K={self.stm_modeler.K_}, {vocab_source} vocab, "
@@ -237,7 +262,7 @@ class LyricsClassificationExperiment:
     def _ensure_features(self):
         if self.X_train is None:
             raise ValueError(
-                "Features not computed. Call compute_fs_ngram_features() first."
+                "Features not computed. Call ngram features first (FS or Monore)."
             )
 
     def _create_trainer(self, n_jobs=None):
@@ -284,6 +309,8 @@ class LyricsClassificationExperiment:
         stop_iter=10,
         uncertain_jump=5,
     ):
+        self._ensure_features()
+        starttime = pd.Timestamp.now()
         checkpoint_dir = self.output_dir + "/optimization_checkpoints"
         trainer = self._create_trainer(n_jobs)
         self._fit_and_store_results(
@@ -299,9 +326,12 @@ class LyricsClassificationExperiment:
             checkpoint_dir=checkpoint_dir,
             parsimony_param="C",
         )
+        endtime = pd.Timestamp.now()
+        self.training_time = (endtime - starttime).total_seconds() / 60
 
     def train_fixed_parametrer_logistic_regression(self, C=1.0, l1_ratio=0.5):
         self._ensure_features()
+        starttime = pd.Timestamp.now()
         trainer = self._create_trainer()
         self._fit_and_store_results(
             trainer,
@@ -314,6 +344,8 @@ class LyricsClassificationExperiment:
         self.model_parameters = results["params"]
         self.model_coefficients = results["coefficients"]
         self.cv_tuning_history = pd.DataFrame()
+        endtime = pd.Timestamp.now()
+        self.training_time = (endtime - starttime).total_seconds() / 60
 
     def save_experiment(self):
         """Save experiment state, excluding non-picklable R objects."""
