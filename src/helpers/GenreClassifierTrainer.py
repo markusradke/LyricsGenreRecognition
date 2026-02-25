@@ -231,7 +231,7 @@ class GenreClassifierTrainer:
 
         print("Selecting best parameters according to 1-SE rule...")
         self.best_params_ = optimizer.select_best_one_se(
-            param_parsim=parsimony_param, ascending=True
+            param_parsim=parsimony_param, ascending=False
         )
         print(f"{pd.DataFrame(self.best_params_, index=['Best Parameters:'])}")
 

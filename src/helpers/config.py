@@ -31,7 +31,7 @@ N_BAYESIAN_INITIAL = 20
 STOP_ITER = 10
 UNCERTAIN_JUMP = 5
 CV_FOLDS = 5
-N_JOBS = 30
+N_JOBS = -10
 
 # Classifier-only parameter space (for FS baseline)
 CLASSIFIER_PARAM_SPACE = {

@@ -333,34 +333,47 @@ class LyricsClassificationExperiment:
             self.corpus_train["genre"], self.corpus_test["genre"]
         )
 
-    def show_random_baseline_evaluation(self):
-        print(self.random_performance_baseline)
+    def _get_random_baseline_evaluation(self):
+        printout = "=" * 60 + "\n"
+        printout += (
+            "Random baseline performance (genre distribution weighted sampling):\n"
+        )
+        printout += str(self.random_performance_baseline)
+        return printout
 
-    def show_tuning_history(self):
-        print("Selected model parameters:")
-        for parameter, value in self.model_parameters.items():
-            print(f"  {parameter}: {value:.3f}")
-        print("=" * 60)
-        print(self.cv_tuning_history)
+    def _get_tuning_history(self):
+        printout = "=" * 60 + "\n"
+        printout += "Selected model parameters:\n"
+        printout += "\n".join(
+            f"  {parameter}: {value:.3f}"
+            for parameter, value in self.model_parameters.items()
+        )
+        printout += "\n" + "-" * 60 + "\n"
+        printout += "Cross-validation tuning history:\n"
+        printout += str(self.cv_tuning_history)
+        return printout
         # plots of cv tuning history
         # chosen model parameters
 
-    def show_model_evaluation(self, top_n_coefficients=10):
-        print("Selected model parameters:")
-        for parameter, value in self.model_parameters.items():
-            print(f"  {parameter}: {value}")
-        print("=" * 60)
+    def _get_model_evaluation(self):
         y_pred = self.model.predict(self.X_test)
-        print(LyricsClassificationMetrics(self.y_test, y_pred))
-        print("=" * 60)
-        print(classification_report(self.y_test, y_pred))
-        # metrics (make metrics per class available: P, R, F1)
+
+        printout = "=" * 60 + "\n"
+        printout += "Model evaluation on test set:\n"
+        printout += str(LyricsClassificationMetrics(self.y_test, y_pred)) + "\n"
+        printout += "-" * 60 + "\n"
+        printout += "Classification report:\n"
+        printout += classification_report(self.y_test, y_pred)
+        return printout
         # confusion matrix
 
-    def show_top_coefficients_per_genre(self, top_n=10):
+    def _get_top_coefficients_per_genre(self, top_n=20):
+        printout = "=" * 60 + "\n"
+        printout += f"Top {top_n} coefficients per genre:\n"
+
         genres = self.model_coefficients.columns
         for genre in genres:
-            print(f"Top {top_n} coefficients for genre: {genre.upper()}")
+            printout += f"\n{genre.upper()}\n"
             top_coeffs = (
                 self.model_coefficients[genre]
                 .abs()
@@ -368,5 +381,44 @@ class LyricsClassificationExperiment:
                 .head(top_n)
             )
             for feature, value in top_coeffs.items():
-                print(f"{feature} ({self.model_coefficients.at[feature, genre]:.3f})")
-            print("\n")
+                printout += (
+                    f"  {feature} ({self.model_coefficients.at[feature, genre]:.3f})\n"
+                )
+        return printout
+
+    def show_random_baseline_evaluation(self):
+        eval = self._get_random_baseline_evaluation()
+        print(eval)
+
+    def show_tuning_history(self):
+        eval = self._get_tuning_history()
+        print(eval)
+
+    def show_model_evaluation(self):
+        eval = self._get_model_evaluation()
+        print(eval)
+
+    def show_top_coefficients_per_genre(self, top_n=20):
+        eval = self._get_top_coefficients_per_genre(top_n)
+        print(eval)
+
+    def save_model_evaluation_txt(self):
+        if self.model is None:
+            print("Model not yet fitted, cannot save evaluation")
+            return None
+
+        evaluation_str = self.__str__() + "\n"
+        evaluation_str += (
+            self._get_random_baseline_evaluation()
+            + "\n"
+            + self._get_model_evaluation()
+            + "\n"
+            + self._get_top_coefficients_per_genre()
+        )
+        if self._get_tuning_history() is not None:
+            evaluation_str += "\n" + self._get_tuning_history()
+
+        with open(self.output_dir + "/model_evaluation.txt", "w") as f:
+            f.write(evaluation_str)
+        print(f"Model evaluation saved to {self.output_dir}/model_evaluation.txt")
+        return None
