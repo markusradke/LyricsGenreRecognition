@@ -20,7 +20,7 @@ def monte_carlo_interrater_agreement_f1(
     Model per track i:
       - use propensities p_i = counts_i / sum(counts_i) (requires sum>0)
       - Two independent "raters" sample y1_i, y2_i ~ Categorical(p_i)
-      - Compute macro-F1 between y1 and y2; also per-genre (one-vs-rest) F1 averaged over MC
+    - Compute macro-F1 between y1 and y2; also per-genre (one-vs-rest) F1 averaged over MC
 
     Returns:
       - DataFrame with per-genre F1 scores (colums: iteration, genre, f1)

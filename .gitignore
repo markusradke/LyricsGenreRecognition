@@ -10,6 +10,7 @@ src/helpers/_old
 *nbconvert*
 notebooks/prototyping/models
 notebooks/prototyping/experiment_outputs
+notebooks/prototyping/experiments
 notebooks/prototyping/_old
 notebooks/prototyping/*_experiment
 DIARY.md

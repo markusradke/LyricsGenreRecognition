@@ -231,7 +231,7 @@ class GenreClassifierTrainer:
 
         print("Selecting best parameters according to 1-SE rule...")
         self.best_params_ = optimizer.select_best_one_se(
-            param_parsim=parsimony_param, ascending=False
+            param_parsim=parsimony_param, ascending=True
         )
         print(f"{pd.DataFrame(self.best_params_, index=['Best Parameters:'])}")
 
@@ -247,7 +247,6 @@ class GenreClassifierTrainer:
         self,
         C: float = 1.0,
         l1_ratio: float = 0.5,
-        cv: int | None = None,
     ) -> None:
         """Train model with fixed hyperparameters.
 

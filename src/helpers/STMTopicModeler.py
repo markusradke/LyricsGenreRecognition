@@ -63,11 +63,13 @@ class STMTopicModeler:
     def __init__(
         self,
         k_range=(2, 20),
+        use_genre_prevalence=True,
         random_state=42,
         model_dir=None,
     ):
         self.k_range = k_range
         self.random_state = random_state
+        self.use_genre_prevalence = use_genre_prevalence
         self.model_dir = Path(model_dir) if model_dir else None
         self._is_fitted = False
 
@@ -244,11 +246,15 @@ local({
         vocab_r = ro.StrVector(self.vocab_)
         k_values = ro.IntVector(range(self.k_range[0], self.k_range[1] + 1))
 
+        if self.use_genre_prevalence:
+            prevalence = ro.Formula("~genre")
+        else:
+            prevalence = ro.NULL
         search_results = self.stm.searchK(
             documents=documents,
             vocab=vocab_r,
             K=k_values,
-            prevalence=ro.Formula("~genre"),
+            prevalence=prevalence,
             data=meta,
             init_type="Spectral",
             heldout_seed=self.random_state,
@@ -301,12 +307,16 @@ local({
             Fitted STM model.
         """
         vocab_r = ro.StrVector(self.vocab_)
+        if self.use_genre_prevalence:
+            prevalence = ro.Formula("~genre")
+        else:
+            prevalence = ro.NULL
 
         model = self.stm.stm(
             documents=documents,
             vocab=vocab_r,
             K=K,
-            prevalence=ro.Formula("~genre"),
+            prevalence=prevalence,
             data=meta,
             max_em_its=500,
             init_type="Spectral",
