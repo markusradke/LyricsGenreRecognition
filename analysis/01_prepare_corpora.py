@@ -1,6 +1,12 @@
 import pandas as pd
-from helpers.generate_report import generate_report
-from helpers.CorpusProcessor import CorpusLemmatizer
+
+
+from helpers.CorpusLemmatizer import CorpusLemmatizer
+from helpers.ensure_english_lyrics import (
+    get_english_confidence,
+    get_english_vocab_ratio,
+)
+from helpers.expand_contractions import expand_contractions, strip_apostrophe_with_s
 
 print("READ IN FULL CORPUS CSV FILE...")
 corpus = pd.read_csv(
@@ -21,21 +27,29 @@ english = corpus[
     & (
         corpus["album.s.title"] != "No Grave but the Sea (Deluxe Edition)"
     )  # contains only "woof woof"
-    & (corpus["cat12"] != "schlager")  # German Genre
+    & (corpus["cat32"] != "schlager")  # German Genre
+    & (corpus["cat32"] != "classical")  # mostly non-english lyrics
 ]
-english.to_csv("data/poptrag_lyrics_genres_corpus_filtered_english.csv", index=True)
 
+english["english_conf"] = english["full_lyrics"].apply(get_english_confidence)
+english["english_vocab_ratio"] = english["full_lyrics"].apply(get_english_vocab_ratio)
+# thresholds were determined by manually checking tracks with low confidence and vocab ratio
+filtered_english = english.query("english_conf > 0.75 and english_vocab_ratio > 0.75")
 
-processor = CorpusLemmatizer(english, lyrics_column="full_lyrics")
+print(
+    "EXPAND CONTRACTIONS, LEMMATIZE AND SAVE LEMMATIZED CORPUS TO CSV IN DATA FOLDER..."
+)
+filtered_english["lyrics_expanded"] = filtered_english["full_lyrics"].map(
+    expand_contractions
+)
+filtered_english["lyrics_expanded"] = filtered_english["lyrics_expanded"].map(
+    strip_apostrophe_with_s
+)  # strip 's
+
+processor = CorpusLemmatizer(filtered_english, lyrics_column="lyrics_expanded")
 processor.lemmatize()
 processor.save_lemmatized(
     "data/poptrag_lyrics_genres_corpus_filtered_english_lemmatized.csv"
-)
-
-
-print("GENERATE REPORT...")
-generate_report(
-    notebook_path="notebooks/reporting/01_prepare_corpora.ipynb", output_path="reports"
 )
 
 print("DONE.")

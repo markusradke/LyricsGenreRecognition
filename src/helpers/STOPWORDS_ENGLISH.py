@@ -1,5 +1,6 @@
 from nltk.corpus import stopwords as nltk_stopwords
 
+
 STOPWORDS_ENGLISH = set(nltk_stopwords.words("english"))
 STOPWORDS_ENGLISH.update(
     [
@@ -8,18 +9,11 @@ STOPWORDS_ENGLISH.update(
         "could've",
         "got",
         "must",
-        "us",
         "that's",
         "there's",
-        # "cause",
-        # "bout",
-        # "em",
-        # "gonna",
-        # "gotta",
-        # "wanna",
-        # "want"
     ]
 )
+
 
 # full list of sorted nltk stopwords for reference
 # [

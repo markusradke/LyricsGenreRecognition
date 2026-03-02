@@ -17,10 +17,10 @@ import pickle
 
 from pathlib import Path
 from joblib import hash as joblib_hash
+from typing import Tuple
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.base import BaseEstimator, TransformerMixin
 
-from .config import MIN_ARTISTS, ENABLE_STOPWORD_FILTER, ENABLE_BIGRAM_BOUNDARY_FILTER
 from .extractor_utils import (
     count_artists_per_ngram,
     extract_ngrams,
@@ -55,8 +55,8 @@ class MonroeExtractor(BaseEstimator, TransformerMixin):
         Whether to filter stopword-only n-grams.
     use_bigram_boundary_filter : bool, default=ENABLE_BIGRAM_BOUNDARY_FILTER
         Whether to filter bigrams that are subsets of unigrams.
-    include_unigrams : bool, default=True
-        Whether to include unigrams in the extraction (in addition to bigrams, trigrams, quadgrams).
+    ngram_taypes : Tuple, default=(1, 2, 3, 4)
+        Which types of ngrams to include in the extraction (default is maximum available).
     random_state : int, default=42
         Random seed for reproducibility.
     checkpoint_dir : str or Path, optional
@@ -79,19 +79,19 @@ class MonroeExtractor(BaseEstimator, TransformerMixin):
 
     def __init__(
         self,
-        min_artists: int = MIN_ARTISTS,
+        min_artists: int = 20,
         p_value: float = 0.01,
         prior_concentration: float = 1.0,
-        use_stopword_filter: bool = ENABLE_STOPWORD_FILTER,
-        use_bigram_boundary_filter: bool = ENABLE_BIGRAM_BOUNDARY_FILTER,
-        include_unigrams: bool = True,
+        use_stopword_filter: bool = True,
+        use_bigram_boundary_filter: bool = True,
+        ngram_types: Tuple = (1, 2, 3, 4),
         random_state: int = 42,
         checkpoint_dir: str = None,
     ):
         self.min_artists = min_artists
         self.p_value = p_value
         self.prior_concentration = prior_concentration
-        self.include_unigrams = include_unigrams
+        self.ngram_types = ngram_types
         self.use_stopword_filter = use_stopword_filter
         self.use_bigram_boundary_filter = use_bigram_boundary_filter
         self.random_state = random_state
@@ -147,15 +147,15 @@ class MonroeExtractor(BaseEstimator, TransformerMixin):
         else:
             print("Checkpoint directory not specified, computing z-scores...")
 
-        if self.include_unigrams:
-            orders_to_extract = [
-                (1, "unigrams"),
-                (2, "bigrams"),
-                (3, "trigrams"),
-                (4, "quadgrams"),
-            ]
-        else:
-            orders_to_extract = [(2, "bigrams"), (3, "trigrams"), (4, "quadgrams")]
+        orders_to_extract = []
+        if 1 in self.ngram_types:
+            orders_to_extract.append((1, "unigrams"))
+        if 2 in self.ngram_types:
+            orders_to_extract.append((2, "bigrams"))
+        if 3 in self.ngram_types:
+            orders_to_extract.append((3, "trigrams"))
+        if 4 in self.ngram_types:
+            orders_to_extract.append((4, "quadgrams"))
 
         order_names = [name for _, name in orders_to_extract]
 
@@ -316,8 +316,14 @@ class MonroeExtractor(BaseEstimator, TransformerMixin):
 
         results = []
         types = ["unigrams", "bigrams", "trigrams", "quadgrams"]
-        if not self.include_unigrams:
+        if 1 not in self.ngram_types:
             types.remove("unigrams")
+        if 2 not in self.ngram_types:
+            types.remove("bigrams")
+        if 3 not in self.ngram_types:
+            types.remove("trigrams")
+        if 4 not in self.ngram_types:
+            types.remove("quadgrams")
 
         for name in types:
             matrix = matrices[name]
