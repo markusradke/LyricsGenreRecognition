@@ -9,6 +9,7 @@ proportions. Uses the stm R package with genre as a prevalence covariate.
 import numpy as np
 import pandas as pd
 import pickle
+import joblib
 from pathlib import Path
 from scipy.sparse import issparse
 
@@ -44,7 +45,8 @@ class STMTopicModeler:
     random_state : int, default=42
         Random seed for reproducibility.
     model_dir : str or Path, optional
-        Directory to save fitted model for later inspection in R. If None, model not saved.
+        Directory to save fitted model and checkpoints. If None, checkpointing
+        is disabled.
 
     Attributes
     ----------
@@ -54,8 +56,8 @@ class STMTopicModeler:
         Fitted STM model (R stm object).
     vocab_ : list of str
         Vocabulary (feature names) used by the model.
-    search_results_ : R object
-        searchK results with diagnostic metrics for all K values tested.
+    search_results_ : dict
+        Tuning results with "K" and "heldout" arrays.
     _is_fitted : bool
         Whether the model has been fitted.
     """
@@ -78,6 +80,61 @@ class STMTopicModeler:
 
         if self.model_dir:
             self.model_dir.mkdir(parents=True, exist_ok=True)
+
+    def _compute_search_hash(self, X_artist, vocab):
+        """
+        Compute a joblib hash of the search inputs for checkpointing.
+
+        Parameters
+        ----------
+        X_artist : sparse matrix
+            Artist-level document-term matrix.
+        vocab : array-like
+            Vocabulary.
+
+        Returns
+        -------
+        hash_str : str
+            Hex hash string.
+        """
+        return joblib.hash(
+            (
+                X_artist,
+                list(vocab),
+                self.k_range,
+                self.use_genre_prevalence,
+                self.random_state,
+            )
+        )
+
+    def _search_checkpoint_path(self, input_hash):
+        """Return Path for the search checkpoint file, or None if model_dir unset."""
+        if self.model_dir is None:
+            return None
+        return self.model_dir / f"stm_search_{input_hash[:12]}.pkl"
+
+    def _load_search_checkpoint(self, checkpoint_path):
+        """
+        Load incremental search results from a checkpoint file.
+
+        Returns
+        -------
+        results : dict with "K" list and "heldout" list, or None if not found.
+        """
+        if checkpoint_path is None or not checkpoint_path.exists():
+            return None
+        results = joblib.load(checkpoint_path)
+        print(
+            f"Resuming search from checkpoint (hash: {checkpoint_path.stem[-12:]}, "
+            f"{len(results['K'])} K values already evaluated: {results['K']})"
+        )
+        return results
+
+    def _save_search_checkpoint(self, checkpoint_path, results):
+        """Save incremental search results dict to checkpoint file."""
+        if checkpoint_path is None:
+            return
+        joblib.dump(results, checkpoint_path)
 
     def tune_and_fit(self, X_artist, artist_genres, vocab):
         """
@@ -106,11 +163,13 @@ class STMTopicModeler:
         documents, meta = self._prepare_stm_data(X_artist, artist_genres)
 
         print(f"Tuning number of topics (K range: {self.k_range})...")
-        self.search_results_ = self._run_searchK(documents, meta)
+        self.search_results_ = self._run_searchK(
+            documents, meta, X_artist=X_artist, vocab=vocab
+        )
 
         self.K_ = self._select_best_K(self.search_results_)
         print(
-            f"Selected K = {self.K_} topics (first local maximum of held-out likelihood)"
+            f"Selected K = {self.K_} topics (highest local maximum of held-out likelihood)"
         )
 
         print(f"Fitting final STM model with K = {self.K_}...")
@@ -227,9 +286,16 @@ local({
 
         return documents, meta
 
-    def _run_searchK(self, documents, meta):
+    def _run_searchK(self, documents, meta, X_artist=None, vocab=None):
         """
-        Run searchK to evaluate different numbers of topics.
+        Evaluate different numbers of topics, skipping K values that fail.
+
+        Manually replicates searchK by creating a held-out set once, then
+        fitting each K individually with R tryCatch so that numerical failures
+        (e.g. Cholesky decomposition errors) are caught and skipped.
+
+        Checkpoints results incrementally after each K so that interrupted
+        runs can resume from where they left off.
 
         Parameters
         ----------
@@ -237,53 +303,162 @@ local({
             STM-formatted documents.
         meta : R DataFrame
             Metadata with genre column.
+        X_artist : sparse matrix, optional
+            Original matrix used to compute the checkpoint hash.
+        vocab : array-like, optional
+            Vocabulary used to compute the checkpoint hash.
 
         Returns
         -------
-        search_results : R object
-            searchK results with diagnostic metrics.
+        search_results : dict with keys "K" and "heldout"
+            Diagnostic metrics for all successfully fitted K values.
         """
         vocab_r = ro.StrVector(self.vocab_)
-        k_values = ro.IntVector(range(self.k_range[0], self.k_range[1] + 1))
 
         if self.use_genre_prevalence:
-            prevalence = ro.Formula("~genre")
+            prevalence_formula = ro.Formula("~genre")
         else:
-            prevalence = ro.NULL
-        search_results = self.stm.searchK(
-            documents=documents,
-            vocab=vocab_r,
-            K=k_values,
-            prevalence=prevalence,
-            data=meta,
-            init_type="Spectral",
-            heldout_seed=self.random_state,
-            verbose=True,
-        )
+            prevalence_formula = ro.NULL
 
-        return search_results
+        # Checkpointing setup
+        input_hash = (
+            self._compute_search_hash(X_artist, vocab)
+            if (X_artist is not None and vocab is not None)
+            else None
+        )
+        checkpoint_path = (
+            self._search_checkpoint_path(input_hash) if input_hash else None
+        )
+        prior = self._load_search_checkpoint(checkpoint_path)
+
+        already_done = set(prior["K"]) if prior else set()
+        results_K = list(prior["K"]) if prior else []
+        results_heldout = list(prior["heldout"]) if prior else []
+
+        if input_hash:
+            print(f"Search hash: {input_hash[:12]}")
+
+        ro.globalenv["._documents"] = documents
+        ro.globalenv["._vocab"] = vocab_r
+        ro.globalenv["._meta"] = meta
+        ro.globalenv["._seed"] = ro.IntVector([self.random_state])
+
+        heldout = ro.r(
+            """
+local({
+  set.seed(._seed[1])
+  make.heldout(._documents, ._vocab)
+})
+"""
+        )
+        ro.globalenv["._heldout"] = heldout
+
+        k_values = list(range(self.k_range[0], self.k_range[1] + 1))
+
+        for k in k_values:
+            if k in already_done:
+                print(f"  K={k}: skipped (cached)")
+                continue
+
+            ro.globalenv["._k"] = ro.IntVector([k])
+            if self.use_genre_prevalence:
+                ro.globalenv["._prevalence"] = prevalence_formula
+            else:
+                ro.globalenv["._prevalence"] = ro.NULL
+
+            result = ro.r(
+                """
+local({
+  tryCatch({
+    model <- stm(
+      documents  = ._heldout$documents,
+      vocab      = ._heldout$vocab,
+      K          = ._k[1],
+      prevalence = ._prevalence,
+      data       = ._meta,
+      max.em.its = 500,
+      init.type  = "Spectral",
+      seed       = ._seed[1],
+      verbose    = TRUE
+    )
+    ho_lik <- eval.heldout(model, ._heldout$missing)$expected.heldout
+    list(success = TRUE, heldout = ho_lik)
+  }, error = function(e) {
+    message(sprintf("K=%d failed: %s", ._k[1], conditionMessage(e)))
+    list(success = FALSE, heldout = NA_real_)
+  })
+})
+"""
+            )
+
+            success = bool(result.rx2("success")[0])
+            if success:
+                ho_val = float(result.rx2("heldout")[0])
+                results_K.append(k)
+                results_heldout.append(ho_val)
+                print(f"  K={k}: heldout likelihood = {ho_val:.4f}")
+            else:
+                results_K.append(k)
+                results_heldout.append(float("nan"))
+                print(f"  K={k}: skipped (model fit failed)")
+
+            self._save_search_checkpoint(
+                checkpoint_path, {"K": results_K, "heldout": results_heldout}
+            )
+
+        for key in (
+            "._documents",
+            "._vocab",
+            "._meta",
+            "._seed",
+            "._heldout",
+            "._k",
+            "._prevalence",
+        ):
+            ro.r(f"if (exists('{key}')) rm({key})")
+
+        if not results_K:
+            raise RuntimeError(
+                "All K values failed during searchK. Cannot select a model."
+            )
+
+        return {"K": np.array(results_K), "heldout": np.array(results_heldout)}
 
     def _select_best_K(self, search_results):
         """
-        Select K with first local maximum of held-out likelihood.
+        Select K with highest local maximum of held-out likelihood.
+
+        Failed K values (NaN heldout likelihood) are excluded from selection.
 
         Parameters
         ----------
-        search_results : R object
-            searchK results.
+        search_results : dict
+            searchK results with "K" and "heldout" arrays.
 
         Returns
         -------
         best_K : int
             Selected number of topics.
         """
-        results = search_results.rx2("results")
-        K_values = np.array(results.rx2("K")).flatten()
-        heldout = np.array(results.rx2("heldout")).flatten()
+        K_values = np.array(search_results["K"]).flatten()
+        heldout = np.array(search_results["heldout"]).flatten()
 
-        for i in range(1, len(heldout) - 1):
-            if heldout[i] > heldout[i - 1] and heldout[i] > heldout[i + 1]:
-                return int(K_values[i])
+        valid_mask = ~np.isnan(heldout)
+        K_values = K_values[valid_mask]
+        heldout = heldout[valid_mask]
+
+        if len(K_values) == 0:
+            raise RuntimeError("No valid K values to select from (all failed).")
+
+        local_max_indices = [
+            i
+            for i in range(1, len(heldout) - 1)
+            if heldout[i] > heldout[i - 1] and heldout[i] > heldout[i + 1]
+        ]
+
+        if local_max_indices:
+            best_idx = max(local_max_indices, key=lambda i: heldout[i])
+            return int(K_values[best_idx])
 
         best_idx = np.argmax(heldout)
         return int(K_values[best_idx])
@@ -329,17 +504,16 @@ local({
     def _save_model(self):
         """Save fitted model and metadata to model directory."""
         model_path = self.model_dir / "stm_model.rds"
-        search_results_path = self.model_dir / "stm_search_results.rds"
         metadata_path = self.model_dir / "stm_metadata.pkl"
 
         self.base.saveRDS(self.stm_model_, str(model_path))
-        self.base.saveRDS(self.search_results_, str(search_results_path))
 
         metadata = {
             "K": self.K_,
             "vocab": self.vocab_,
             "k_range": self.k_range,
             "random_state": self.random_state,
+            "search_results": self.search_results_,
         }
         with open(metadata_path, "wb") as f:
             pickle.dump(metadata, f)

@@ -19,26 +19,32 @@ X_train, X_test, y_train, y_test = split_group_stratified_and_join(
 )
 
 
-# topic_extractor = MonroeExtractor(
-#     min_artists=20,
-#     p_value=0.001,
-#     prior_concentration=1.0,
-#     use_stopword_filter=True,
-#     ngram_types=(1,),
-#     random_state=42,
-#     checkpoint_dir="data/checkpoints/monroe_extractor_topic",
-# )
-# topic_extractor.fit(
-#     X_train["lyrics_lemmatized"], y_train, X_train["track.s.firstartist.name"]
-# )
-# topic_vocab = pd.Series(topic_extractor.vocabulary_)
-# topic_vocab.to_csv("data/monroe_topic_vocabulary.csv", index=False)
+X_train_metadata = X_train[
+    ["track.s.firstartist.name", "cat32", "cat25", "cat12", "cat5"]
+]
+X_train_metadata.to_csv("data/X_train_metadata.csv", index=False)
 
-# X_train_topics_monroe_full = topic_extractor.transform(X_train["lyrics_lemmatized"])
-# X_test_topics_monroe_full = topic_extractor.transform(X_test["lyrics_lemmatized"])
 
-# sparse.save_npz("data/X_train_topics_monroe_full.npz", X_train_topics_monroe_full)
-# sparse.save_npz("data/X_test_topics_monroe_full.npz", X_test_topics_monroe_full)
+topic_extractor = MonroeExtractor(
+    min_artists=20,
+    p_value=0.001,
+    prior_concentration=1.0,
+    use_stopword_filter=True,
+    ngram_types=(1,),
+    random_state=42,
+    checkpoint_dir="data/checkpoints/monroe_extractor_topic",
+)
+topic_extractor.fit(
+    X_train["lyrics_lemmatized"], y_train, X_train["track.s.firstartist.name"]
+)
+topic_vocab = pd.Series(topic_extractor.vocabulary_)
+topic_vocab.to_csv("data/monroe_topic_vocabulary.csv", index=False)
+
+X_train_topics_monroe_full = topic_extractor.transform(X_train["lyrics_lemmatized"])
+X_test_topics_monroe_full = topic_extractor.transform(X_test["lyrics_lemmatized"])
+
+sparse.save_npz("data/X_train_topics_monroe_full.npz", X_train_topics_monroe_full)
+sparse.save_npz("data/X_test_topics_monroe_full.npz", X_test_topics_monroe_full)
 
 style_extractor = MonroeExtractor(
     min_artists=20,
