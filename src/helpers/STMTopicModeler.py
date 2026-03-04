@@ -426,7 +426,7 @@ local({
 
     def _select_best_K(self, search_results):
         """
-        Select K with highest local maximum of held-out likelihood.
+        Select K with first local maximum of held-out likelihood.
 
         Failed K values (NaN heldout likelihood) are excluded from selection.
 
@@ -457,7 +457,7 @@ local({
         ]
 
         if local_max_indices:
-            best_idx = max(local_max_indices, key=lambda i: heldout[i])
+            best_idx = local_max_indices[0]
             return int(K_values[best_idx])
 
         best_idx = np.argmax(heldout)
