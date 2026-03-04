@@ -16,6 +16,10 @@ notebooks/prototyping/*_experiment
 DIARY.md
 TODO.md
 _old
+venv
+*__pycache__
+*.ipynb_checkpoints
+
 
 
 *.csv

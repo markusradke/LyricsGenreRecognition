@@ -4,7 +4,7 @@ from scipy import sparse
 from helpers.STMTopicModeler import STMTopicModeler
 from helpers.aggregate_artist_dtm import aggregate_dtm_by_artist
 
-K_RANGE = (2, 3)
+K_RANGE = (2, 20)
 
 X_train_metadata = pd.read_csv("data/X_train_metadata.csv")
 artists = X_train_metadata["track.s.firstartist.name"]
