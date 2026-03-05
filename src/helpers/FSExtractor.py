@@ -15,7 +15,6 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.base import BaseEstimator, TransformerMixin
 from collections import defaultdict
 
-from .config import MIN_ARTISTS, ENABLE_STOPWORD_FILTER
 from .extractor_utils import count_artists_per_ngram, extract_ngrams
 
 
@@ -29,13 +28,13 @@ class FSExtractor(BaseEstimator, TransformerMixin):
 
     Parameters
     ----------
-    min_artists : int, default=MIN_ARTISTS (from config)
+    min_artists : int, default=20
         Minimum number of unique artists that must use an n-gram for
         it to be included in the vocabulary.
     top_vocab_per_genre : int, default=100
         Number of top-ranked n-grams to select per genre per n-gram
         order (unigrams, bigrams, trigrams).
-    use_stopword_filter : bool, default=ENABLE_STOPWORD_FILTER
+    use_stopword_filter : bool, default=False
         Whether to filter stopword-only n-grams.
     random_state : int, default=42
         Random seed for reproducibility.
@@ -57,9 +56,9 @@ class FSExtractor(BaseEstimator, TransformerMixin):
 
     def __init__(
         self,
-        min_artists: int = MIN_ARTISTS,
+        min_artists: int = 20,
         top_vocab_per_genre: int = 100,
-        use_stopword_filter: bool = ENABLE_STOPWORD_FILTER,
+        use_stopword_filter: bool = False,
         random_state: int = 42,
         checkpoint_dir: str = None,
     ):
