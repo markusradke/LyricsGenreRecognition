@@ -1,13 +1,12 @@
 """Training pipeline for genre classification with Bayesian optimization."""
 
-import numpy as np
 import pandas as pd
-from imblearn.pipeline import Pipeline as ImbPipeline
+from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from typing import Any
 
-from .adaptive_sampling import AdaptiveSampler
 from .bayesian_optimization import BayesianOptimizer
 
 
@@ -20,27 +19,21 @@ class GenreClassifierTrainer:
         y_train: pd.Series,
         random_state: int = 42,
         n_jobs: int = 1,
-        extractor: Any | None = None,
-        artist_train: pd.Series | None = None,
         feature_names: list[str] | None = None,
     ) -> None:
         """Initialize trainer.
 
         Args:
-            X_train: Training features (DataFrame) or raw lyrics (Series if extractor provided)
+            X_train: Training features (DataFrame) or raw lyrics
             y_train: Training labels
             random_state: Random seed for reproducibility
             n_jobs: Number of parallel jobs
-            extractor: Optional sklearn transformer (FSExtractor or MonroeExtractor)
-            artist_train: Artist metadata (required if extractor provided)
             feature_names: Feature names for sparse matrices (auto-detected for DataFrames)
         """
         self.X_train = X_train
         self.y_train = y_train
         self.random_state = random_state
         self.n_jobs = n_jobs
-        self.extractor = extractor
-        self.artist_train = artist_train
         self.best_pipeline_ = None
         self.best_params_ = None
         self.coefficients_ = None
@@ -53,68 +46,55 @@ class GenreClassifierTrainer:
         else:
             self.feature_names_ = [f"feature_{i}" for i in range(X_train.shape[1])]
 
-        if extractor is not None and artist_train is None:
-            raise ValueError("artist_train required when extractor is provided")
-
-    def _create_pipeline(self, params: dict[str, Any]) -> ImbPipeline:
+    def _create_pipeline(self, params: dict[str, Any]) -> Pipeline:
         """Create pipeline from parameters.
 
         Args:
-            params: Pipeline parameters. May include extractor params (alpha_*)
-                    and classifier params (C, l1_ratio, target_ratio).
+            params: Pipeline parameters. The learner is chosen based on the params dictionary.
+                If dictionary contains 'C' and 'l1_ratio', a LogisticRegression with elastic net penalty is created.
+                If dictionary contains 'max_features' and 'min_samples' parameters, a RandomForestClassifier is created.
 
         Returns:
             Configured pipeline. Always employs class-weighted loss.
         """
         steps = []
-
-        # Add extractor as first step if provided
-        if self.extractor is not None:
-            # Extract extractor-specific params
-            extractor_params = {
-                k: v
-                for k, v in params.items()
-                if k.startswith("alpha_")
-                or k in ["z_threshold", "apply_fdr", "fdr_level"]
-            }
-            # Clone extractor with updated params
-            from sklearn.base import clone
-
-            extractor_clone = clone(self.extractor)
-            extractor_clone.set_params(**extractor_params)
-            steps.append(("extractor", extractor_clone))
-
         steps.append(("scaler", StandardScaler(with_mean=False)))
 
-        if params.get("target_ratio") is not None:
+        if "C" in params and "l1_ratio" in params:
             steps.append(
                 (
-                    "sampler",
-                    AdaptiveSampler(
-                        target_ratio=params["target_ratio"],
+                    "classifier",
+                    LogisticRegression(
+                        C=params.get("C", 1.0),
+                        l1_ratio=params.get("l1_ratio", 0.5),
+                        solver="saga",
+                        max_iter=10000,
                         random_state=self.random_state,
+                        class_weight="balanced",
+                        verbose=1,
                     ),
                 )
             )
 
-        steps.append(
-            (
-                "classifier",
-                LogisticRegression(
-                    C=params.get("C", 1.0),
-                    l1_ratio=params.get("l1_ratio", 0.5),
-                    solver="saga",
-                    max_iter=10000,
-                    random_state=self.random_state,
-                    class_weight="balanced",
-                ),
+        if "max_features" in params and "min_samples" in params:
+            steps.append(
+                (
+                    "classifier",
+                    RandomForestClassifier(
+                        n_estimators=1000,
+                        max_features=params.get("max_features"),
+                        min_samples_split=params.get("min_samples"),
+                        random_state=self.random_state,
+                        class_weight="balanced",
+                        verbose=1,
+                    ),
+                )
             )
-        )
 
-        return ImbPipeline(steps)
+        return Pipeline(steps)
 
     def _extract_coefficients(
-        self, pipeline: ImbPipeline, feature_names: list[str]
+        self, pipeline: Pipeline, feature_names: list[str]
     ) -> pd.DataFrame:
         """Extract model coefficients as DataFrame.
 
@@ -134,15 +114,15 @@ class GenreClassifierTrainer:
 
     def fit_with_bayesian_optimization(
         self,
-        param_space: dict[str, list[float]] | None = None,
+        param_space: dict[str, list[float]],
+        parsimony_param: str,
         n_initial: int = 25,
-        n_iterations: int = 50,
+        n_iterations: int = 100,
         n_points: int = 1,
-        stop_iter: int = 10,
+        stop_iter: int = 20,
         uncertain_jump: int = 5,
         cv: int = 5,
         checkpoint_dir: str | None = None,
-        parsimony_param: str = "C",
     ) -> None:
         """Train model using Bayesian optimization.
 
@@ -156,13 +136,6 @@ class GenreClassifierTrainer:
             checkpoint_dir: Directory for checkpoints
             parsimony_param: Parameter to use for 1-SE rule
         """
-        if param_space is None:
-            param_space = {
-                "C": [-3, 2],
-                "l1_ratio": [0, 1],
-                "target_ratio": [np.log10(1.0), np.log10(5.0)],
-            }
-
         optimizer = BayesianOptimizer(
             param_space=param_space,
             n_initial=n_initial,
@@ -177,57 +150,9 @@ class GenreClassifierTrainer:
             checkpoint_dir=checkpoint_dir,
         )
 
-        # Create custom fit function if extractor is in pipeline
-        if self.extractor is not None:
-
-            def pipeline_factory_with_artist(params):
-                pipeline = self._create_pipeline(params)
-
-                # Wrap pipeline to pass artist during fit
-                class PipelineWithArtist:
-                    def __init__(self, pipeline, artist):
-                        self.pipeline = pipeline
-                        self.artist = artist
-
-                    def fit(self, X, y):
-                        # Fit extractor with artist metadata
-                        self.pipeline.named_steps["extractor"].fit(
-                            X, y, artist=self.artist
-                        )
-                        # Fit rest of pipeline
-                        X_transformed = self.pipeline.named_steps[
-                            "extractor"
-                        ].transform(X)
-                        # Create pipeline without extractor for remaining steps
-                        from imblearn.pipeline import Pipeline as ImbPipeline
-
-                        remaining_steps = [
-                            (name, step)
-                            for name, step in self.pipeline.steps
-                            if name != "extractor"
-                        ]
-                        remaining_pipeline = ImbPipeline(remaining_steps)
-                        remaining_pipeline.fit(X_transformed, y)
-                        # Rebuild full pipeline
-                        for name, step in remaining_pipeline.named_steps.items():
-                            self.pipeline.named_steps[name] = step
-                        return self.pipeline
-
-                    def predict(self, X):
-                        return self.pipeline.predict(X)
-
-                    def score(self, X, y):
-                        return self.pipeline.score(X, y)
-
-                return PipelineWithArtist(pipeline, self.artist_train)
-
-            self.tuning_history_ = optimizer.run_search(
-                pipeline_factory_with_artist, self.X_train, self.y_train
-            )
-        else:
-            self.tuning_history_ = optimizer.run_search(
-                self._create_pipeline, self.X_train, self.y_train
-            )
+        self.tuning_history_ = optimizer.run_search(
+            self._create_pipeline, self.X_train, self.y_train
+        )
 
         print("Selecting best parameters according to 1-SE rule...")
         self.best_params_ = optimizer.select_best_one_se(
@@ -243,7 +168,7 @@ class GenreClassifierTrainer:
             self.best_pipeline_, self.feature_names_
         )
 
-    def fit_with_fixed_params(
+    def fit_logistic_regression_with_fixed_params(
         self,
         C: float = 1.0,
         l1_ratio: float = 0.5,
@@ -269,6 +194,29 @@ class GenreClassifierTrainer:
         self.coefficients_ = self._extract_coefficients(
             self.best_pipeline_, self.feature_names_
         )
+
+    def fit_random_forest_with_fixed_params(
+        self,
+        max_features: float = 0.5,
+        min_samples: int = 2,
+    ) -> None:
+        """Train Random Forest with fixed hyperparameters.
+
+        Args:
+            X_train: Training features
+            y_train: Training labels
+            max_features: Max features for Random Forest
+            min_samples: Min samples split for Random Forest
+        """
+        self.best_params_ = {
+            "max_features": max_features,
+            "min_samples": min_samples,
+        }
+
+        print("Training Random Forest pipeline with fixed parameters...")
+        self.best_pipeline_ = self._create_pipeline(self.best_params_)
+
+        self.best_pipeline_.fit(self.X_train, self.y_train)
 
     def get_results(self) -> dict:
         """Get training results.

@@ -24,25 +24,29 @@ X_train_metadata = X_train[
     ["track.s.firstartist.name", "cat32", "cat25", "cat12", "cat5"]
 ]
 X_train_metadata.to_csv("data/X_train_metadata.csv", index=False)
+X_test_metadata = X_test[
+    ["track.s.firstartist.name", "cat32", "cat25", "cat12", "cat5"]
+]
+X_test_metadata.to_csv("data/X_test_metadata.csv", index=False)
 
-fs_extractor = FSExtractor(
-    min_artists=20,
-    use_stopword_filter=False,
-    top_vocab_per_genre=100,
-    random_state=42,
-    checkpoint_dir="data/checkpoints/fs_extractor",
-)
+# fs_extractor = FSExtractor(
+#     min_artists=20,
+#     use_stopword_filter=False,
+#     top_vocab_per_genre=100,
+#     random_state=42,
+#     checkpoint_dir="data/checkpoints/fs_extractor",
+# )
 
-for granularity in [5, 12, 25, 32]:
-    fs_extractor.fit(
-        X_train["full_lyrics"],
-        X_train_metadata[f"cat{granularity}"],
-        X_train["track.s.firstartist.name"],
-    )
-    X_train_fs = fs_extractor.transform(X_train["full_lyrics"])
-    X_test_fs = fs_extractor.transform(X_test["full_lyrics"])
-    sparse.save_npz(f"data/X_train_fs_G{granularity}.npz", X_train_fs)
-    sparse.save_npz(f"data/X_test_fs_G{granularity}.npz", X_test_fs)
+# for granularity in [5, 12, 25, 32]:
+#     fs_extractor.fit(
+#         X_train["full_lyrics"],
+#         X_train_metadata[f"cat{granularity}"],
+#         X_train["track.s.firstartist.name"],
+#     )
+#     X_train_fs = fs_extractor.transform(X_train["full_lyrics"])
+#     X_test_fs = fs_extractor.transform(X_test["full_lyrics"])
+#     sparse.save_npz(f"data/X_train_fs_G{granularity}.npz", X_train_fs)
+#     sparse.save_npz(f"data/X_test_fs_G{granularity}.npz", X_test_fs)
 
 # topic_extractor = MonroeExtractor(
 #     min_artists=20,
