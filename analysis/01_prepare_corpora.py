@@ -28,7 +28,10 @@ english = corpus[
         corpus["album.s.title"] != "No Grave but the Sea (Deluxe Edition)"
     )  # contains only "woof woof"
     & (corpus["cat32"] != "schlager")  # German Genre
+    & (corpus["cat25"] != "schlager")  # German Genre
+    & (corpus["cat12"] != "schlager")  # German Genre
     & (corpus["cat32"] != "classical")  # mostly non-english lyrics
+    & (corpus["cat25"] != "classical")  # mostly non-english lyrics
 ]
 
 english["english_conf"] = english["full_lyrics"].apply(get_english_confidence)

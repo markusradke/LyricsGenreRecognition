@@ -5,6 +5,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
+from sklearn.inspection import permutation_importance
 from typing import Any
 
 from .bayesian_optimization import BayesianOptimizer
@@ -17,6 +18,8 @@ class GenreClassifierTrainer:
         self,
         X_train: pd.DataFrame | pd.Series,
         y_train: pd.Series,
+        X_test: pd.DataFrame | pd.Series,
+        y_test: pd.Series,
         random_state: int = 42,
         n_jobs: int = 1,
         feature_names: list[str] | None = None,
@@ -32,11 +35,14 @@ class GenreClassifierTrainer:
         """
         self.X_train = X_train
         self.y_train = y_train
+        self.X_test = X_test
+        self.y_test = y_test
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.best_pipeline_ = None
         self.best_params_ = None
         self.coefficients_ = None
+        self.vip_ = None
         self.tuning_history_ = None
 
         if feature_names is not None:
@@ -52,7 +58,7 @@ class GenreClassifierTrainer:
         Args:
             params: Pipeline parameters. The learner is chosen based on the params dictionary.
                 If dictionary contains 'C' and 'l1_ratio', a LogisticRegression with elastic net penalty is created.
-                If dictionary contains 'max_features' and 'min_samples' parameters, a RandomForestClassifier is created.
+                If dictionary contains 'max_features' and 'min_samples_leaf' parameters, a RandomForestClassifier is created.
 
         Returns:
             Configured pipeline. Always employs class-weighted loss.
@@ -76,14 +82,14 @@ class GenreClassifierTrainer:
                 )
             )
 
-        if "max_features" in params and "min_samples" in params:
+        if "max_features" in params and "min_samples_leaf" in params:
             steps.append(
                 (
                     "classifier",
                     RandomForestClassifier(
                         n_estimators=1000,
                         max_features=params.get("max_features"),
-                        min_samples_split=params.get("min_samples"),
+                        min_samples_split=params.get("min_samples_leaf"),
                         random_state=self.random_state,
                         class_weight="balanced",
                         verbose=1,
@@ -116,6 +122,7 @@ class GenreClassifierTrainer:
         self,
         param_space: dict[str, list[float]],
         parsimony_param: str,
+        parsimony_ascending: bool,
         n_initial: int = 25,
         n_iterations: int = 100,
         n_points: int = 1,
@@ -156,7 +163,7 @@ class GenreClassifierTrainer:
 
         print("Selecting best parameters according to 1-SE rule...")
         self.best_params_ = optimizer.select_best_one_se(
-            param_parsim=parsimony_param, ascending=True
+            param_parsim=parsimony_param, ascending=parsimony_ascending
         )
         print(f"{pd.DataFrame(self.best_params_, index=['Best Parameters:'])}")
 
@@ -164,9 +171,19 @@ class GenreClassifierTrainer:
         self.best_pipeline_ = self._create_pipeline(self.best_params_)
         self.best_pipeline_.fit(self.X_train, self.y_train)
 
-        self.coefficients_ = self._extract_coefficients(
-            self.best_pipeline_, self.feature_names_
-        )
+        if "C" in self.best_params_ and "l1_ratio" in self.best_params_:
+            print("Extracting model coefficients...")
+            self.coefficients_ = self._extract_coefficients(
+                self.best_pipeline_, self.feature_names_
+            )
+        if (
+            "max_features" in self.best_params_
+            and "min_samples_leaf" in self.best_params_
+        ):
+            print("Calculating holdout permutation importance...")
+            self.vip_ = permutation_importance(
+                self.best_pipeline_, self.X_test, self.y_test, n_jobs=self.n_jobs
+            )
 
     def fit_logistic_regression_with_fixed_params(
         self,
@@ -198,7 +215,7 @@ class GenreClassifierTrainer:
     def fit_random_forest_with_fixed_params(
         self,
         max_features: float = 0.5,
-        min_samples: int = 2,
+        min_samples_leaf: int = 2,
     ) -> None:
         """Train Random Forest with fixed hyperparameters.
 
@@ -206,11 +223,11 @@ class GenreClassifierTrainer:
             X_train: Training features
             y_train: Training labels
             max_features: Max features for Random Forest
-            min_samples: Min samples split for Random Forest
+            min_samples_leaf: Min samples split for Random Forest
         """
         self.best_params_ = {
             "max_features": max_features,
-            "min_samples": min_samples,
+            "min_samples_leaf": min_samples_leaf,
         }
 
         print("Training Random Forest pipeline with fixed parameters...")
@@ -228,5 +245,6 @@ class GenreClassifierTrainer:
             "pipeline": self.best_pipeline_,
             "params": self.best_params_,
             "coefficients": self.coefficients_,
+            "holdout_permutation_importance": self.vip_,
             "tuning_history": self.tuning_history_,
         }

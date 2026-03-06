@@ -99,6 +99,8 @@ class LyricsClassificationExperiment:
         return GenreClassifierTrainer(
             self.X_train,
             self.y_train,
+            self.X_test,
+            self.y_test,
             self.random_state,
             n_jobs,
             feature_names=feature_names,
@@ -110,13 +112,23 @@ class LyricsClassificationExperiment:
         results = trainer.get_results()
         self.model = results.get("pipeline", None)
         self.model_parameters = results.get("params", {})
-        self.model_coefficients = results.get("coefficients", pd.DataFrame())
         self.cv_tuning_history = results.get("tuning_history", pd.DataFrame())
+        try:
+            self.model_coefficients = results.get("coefficients", pd.DataFrame())
+        except:
+            self.model_coefficients = None
+        try:
+            self.holdout_permutation_importance = results.get(
+                "holdout_permutation_importance", None
+            )
+        except:
+            self.holdout_permutation_importance = None
 
     def tune_and_train_classifier(
         self,
         param_space,
         parsimony_param,
+        parsimony_ascending=True,
         cv=5,
         n_initial=25,
         n_iterations=100,
@@ -133,6 +145,7 @@ class LyricsClassificationExperiment:
             "fit_with_bayesian_optimization",
             param_space=param_space,
             parsimony_param=parsimony_param,
+            parsimony_ascending=parsimony_ascending,
             n_initial=n_initial,
             n_points=n_points,
             n_iterations=n_iterations,
@@ -206,6 +219,8 @@ class LyricsClassificationExperiment:
         # confusion matrix
 
     def _get_top_coefficients_per_genre(self, top_n=20):
+        if self.model_coefficients is None:
+            return None
         printout = "=" * 60 + "\n"
         printout += f"Top {top_n} coefficients per genre:\n"
 
@@ -224,6 +239,22 @@ class LyricsClassificationExperiment:
                 )
         return printout
 
+    def _get_holdout_permutation_importance(self):
+        if self.holdout_permutation_importance is None:
+            return None
+        printout = "=" * 60 + "\n"
+        printout += "Holdout set permutation importance:\n"
+        importance_df = pd.DataFrame(
+            {
+                "feature": self.X_test.columns,
+                "importance_mean": self.holdout_permutation_importance.importances_mean,
+                "importance_std": self.holdout_permutation_importance.importances_std,
+            }
+        ).sort_values(by="importance_mean", ascending=False)
+        for _, row in importance_df.iterrows():
+            printout += f"  {row['feature']}: {row['importance_mean']:.3f} +- {row['importance_std']:.3f}\n"
+        return printout
+
     def show_random_baseline_evaluation(self):
         eval = self._get_random_baseline_evaluation()
         print(eval)
@@ -240,6 +271,10 @@ class LyricsClassificationExperiment:
         eval = self._get_top_coefficients_per_genre(top_n)
         print(eval)
 
+    def show_holdout_permutation_importance(self):
+        eval = self._get_holdout_permutation_importance()
+        print(eval)
+
     def save_model_evaluation_txt(self):
         if self.model is None:
             print("Model not yet fitted, cannot save evaluation")
@@ -247,12 +282,12 @@ class LyricsClassificationExperiment:
 
         evaluation_str = self.__str__() + "\n"
         evaluation_str += (
-            self._get_random_baseline_evaluation()
-            + "\n"
-            + self._get_model_evaluation()
-            + "\n"
-            + self._get_top_coefficients_per_genre()
+            self._get_random_baseline_evaluation() + "\n" + self._get_model_evaluation()
         )
+        if self.model_coefficients is not None:
+            evaluation_str += "\n" + self._get_top_coefficients_per_genre()
+        if self.holdout_permutation_importance is not None:
+            evaluation_str += "\n" + self._get_holdout_permutation_importance()
         if self._get_tuning_history() is not None:
             evaluation_str += "\n" + self._get_tuning_history()
 

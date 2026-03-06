@@ -21,7 +21,7 @@ def transform_sample_to_params(
         value_range = param_range[1] - param_range[0]
         scaled_value = param_range[0] + sample[i] * value_range
 
-        if param_name in {"C", "target_ratio"} or param_name.startswith("alpha"):
+        if param_name in {"C", "min_samples_leaf"}:
             params[param_name] = 10**scaled_value
         else:
             params[param_name] = scaled_value
