@@ -227,7 +227,10 @@ def _process_batch_results(
         zip(batch_params, batch_results)
     ):
         point_num = iteration + i + 1
-        print(f"Bayesian evaluation {point_num}/{optimizer.n_iterations}")
+        params_str = "  ".join(f"{k}={v:.4g}" for k, v in sorted(params.items()))
+        print(
+            f"Bayesian evaluation {point_num}/{optimizer.n_iterations}  [{params_str}]"
+        )
         optimizer.results.append(
             {"params": params, "score_mean": mean_score, "score_se": std_error}
         )
@@ -260,7 +263,8 @@ def _run_initial_sequential(
 
     for i, params in enumerate(remaining_params):
         idx = completed_initial + i + 1
-        print(f"Initial evaluation {idx}/{optimizer.n_initial}")
+        params_str = "  ".join(f"{k}={v:.4g}" for k, v in sorted(params.items()))
+        print(f"Initial evaluation {idx}/{optimizer.n_initial}  [{params_str}]")
         mean_score, std_error = evaluate_params(
             pipeline_factory,
             params,
@@ -303,10 +307,11 @@ def _run_initial_parallel(
         zip(remaining_params, results_parallel)
     ):
         idx = completed_initial + i + 1
+        params_str = "  ".join(f"{k}={v:.4g}" for k, v in sorted(params.items()))
         optimizer.results.append(
             {"params": params, "score_mean": mean_score, "score_se": std_error}
         )
-        print(f"Initial evaluation {idx}/{optimizer.n_initial}")
+        print(f"Initial evaluation {idx}/{optimizer.n_initial}  [{params_str}]")
         print(f"Score: {mean_score:.4f} +- {std_error:.4f} (std. err.)")
         print("-" * 60)
 
