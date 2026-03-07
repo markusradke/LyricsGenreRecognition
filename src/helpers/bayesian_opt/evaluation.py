@@ -1,6 +1,7 @@
 """Cross-validation evaluation for Bayesian optimization."""
 
 import warnings
+import gc
 
 import numpy as np
 from sklearn.model_selection import StratifiedKFold, cross_val_score
@@ -49,10 +50,8 @@ def evaluate_params(
     mean_score = np.mean(scores)
     std_error = np.std(scores, ddof=1) / np.sqrt(len(scores))
 
-    if np.isnan(mean_score) or np.isnan(std_error):
-        print(f"WARNING: NaN score detected for params: {params}. Assigning -inf.")
-        mean_score = -np.inf
-        std_error = 0.0
+    del pipeline
+    gc.collect()
 
     return mean_score, std_error
 

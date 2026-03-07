@@ -5,7 +5,7 @@ from scipy import sparse
 
 from helpers.LyricsClassficationExperiment import LyricsClassificationExperiment
 
-SUBSAMPLE_DEBUG = 0.005
+SUBSAMPLE_DEBUG = 1.0
 
 C = 1.0
 L1_RATIO = 0.5

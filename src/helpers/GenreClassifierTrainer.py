@@ -80,7 +80,7 @@ class GenreClassifierTrainer:
                         max_iter=10000,
                         random_state=self.random_state,
                         class_weight="balanced",
-                        verbose=1,
+                        verbose=0,
                     ),
                 )
             )
@@ -94,9 +94,9 @@ class GenreClassifierTrainer:
                         max_features=params.get("max_features"),
                         min_samples_leaf=params.get("min_samples_leaf"),
                         random_state=self.random_state,
-                        n_jobs=-4,
+                        n_jobs=-1,
                         class_weight="balanced",
-                        verbose=1,
+                        verbose=0,
                     ),
                 )
             )

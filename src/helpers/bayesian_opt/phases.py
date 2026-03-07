@@ -1,6 +1,7 @@
 """Execution logic for optimization phases."""
 
 import pandas as pd
+import gc
 from joblib import Parallel, delayed
 
 from .checkpointing import save_checkpoint
@@ -196,7 +197,7 @@ def _process_batch_results(
             {"params": params, "score_mean": mean_score, "score_se": std_error}
         )
         print(f"Score: {mean_score:.4f} +- {std_error:.4f} (std. err.)")
-
+        gc.collect()
         if optimizer.best_score is None or mean_score > optimizer.best_score:
             optimizer.best_score = mean_score
             optimizer.iters_without_improvement = 0
