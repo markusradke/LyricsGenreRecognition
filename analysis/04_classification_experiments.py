@@ -19,28 +19,10 @@ train_metadata = pd.read_csv("data/X_train_metadata.csv")
 test_metadata = pd.read_csv("data/X_test_metadata.csv")
 
 
-#######################################################################################
-# ATTENTION: After rerunning the corpus cleaning, please remove these steps and
-# corresponding code in the load_classification_features function
-#######################################################################################
-# remove index from metadata and training set
-train_metadata_classical = train_metadata[train_metadata["cat25"] == "classical"].index
-print(train_metadata_classical)
-train_metadata = train_metadata.drop(train_metadata_classical).reset_index(drop=True)
-
-
 def load_classification_features(type, granularity):
     if type == "fs":
         X_train = sparse.load_npz(f"data/X_train_fs_G{granularity}.npz")
         X_test = sparse.load_npz(f"data/X_test_fs_G{granularity}.npz")
-        # TODO: remove when rerunning after cleaned corpus
-        # remove classical tracks from training set, because they are mostly non-english and would distort the classification results
-        X_train = sparse.vstack(
-            [
-                X_train[: train_metadata_classical[0]],
-                X_train[train_metadata_classical[-1] + 1 :],
-            ]
-        )
     elif type == "topic":
         X_train = pd.read_csv(f"data/X_train_topics_G{granularity}.csv")
         X_train.columns = [f"topic_{col}" for col in X_train.columns]
@@ -48,19 +30,11 @@ def load_classification_features(type, granularity):
             f"data/X_test_topics_G{granularity}.csv",
         )
         X_test.columns = [f"topic_{col}" for col in X_test.columns]
-        # TODO: remove when rerunning after cleaned corpus
-        # remove classical tracks from training set, because they are mostly non-english and would distort the classification results
-        X_train = X_train.drop(
-            index=train_metadata_classical,
-        ).reset_index(drop=True)
     elif type == "style":
         X_train = pd.read_csv(f"data/X_train_style_G{granularity}.csv")
         X_train.columns = [f"style_{col}" for col in X_train.columns]
         X_test = pd.read_csv(f"data/X_test_style_G{granularity}.csv")
         X_test.columns = [f"style_{col}" for col in X_test.columns]
-        # TODO: remove when rerunning after cleaned corpus
-        # remove classical tracks from training set, because they are mostly non-english and would distort the classification results
-        X_train = X_train.drop(index=train_metadata_classical).reset_index(drop=True)
     else:
         raise ValueError("Invalid type. Must be one of 'fs', 'topic', or 'style'.")
     return X_train, X_test
@@ -106,17 +80,17 @@ def load_combined_features(granularity):
 
 # (feature_type, model_type, model_name_prefix)
 EXPERIMENTS = [
-    # ("fs", "lr", "classificator_fs_lr"),
-    # ("topic", "lr", "classificator_topic_lr"),
-    # ("style", "lr", "classificator_style_lr"),
-    # ("combined", "lr", "classificator_topicstyle_lr"),
+    ("fs", "lr", "classificator_fs_lr"),
+    ("topic", "lr", "classificator_topic_lr"),
+    ("style", "lr", "classificator_style_lr"),
+    ("combined", "lr", "classificator_topicstyle_lr"),
     ("topic", "rf", "classificator_topic_rf"),
-    # ("style", "rf", "classificator_style_rf"),
-    # ("combined", "rf", "classificator_topicstyle_rf"),
+    ("style", "rf", "classificator_style_rf"),
+    ("combined", "rf", "classificator_topicstyle_rf"),
 ]
 
 for feature_type, mode, name_prefix in EXPERIMENTS:
-    for granularity in [5]:  # [5, 12, 25]:
+    for granularity in [5, 12, 25]:
         if feature_type == "combined":
             X_train, X_test = load_combined_features(granularity)
         else:
