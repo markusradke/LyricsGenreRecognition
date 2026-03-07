@@ -66,8 +66,11 @@ def _extract_training_data(
         Tuple of (parameter_matrix, score_vector)
     """
     param_names = sorted(param_space.keys())
-    X_train = np.array([[r["params"][p] for p in param_names] for r in results])
-    y_train = np.array([r["score_mean"] for r in results])
+    valid = [r for r in results if np.isfinite(r["score_mean"])]
+    if not valid:
+        raise ValueError("All evaluation scores are non-finite; cannot fit surrogate.")
+    X_train = np.array([[r["params"][p] for p in param_names] for r in valid])
+    y_train = np.array([r["score_mean"] for r in valid])
     return X_train, y_train
 
 
