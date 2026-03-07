@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 
 from .checkpointing import create_model_hash, load_checkpoint
 from .phases import run_bayesian_phase, run_initial_phase
@@ -113,13 +114,20 @@ class BayesianOptimizer:
                 f"Available: {list(self.tuning_history.columns)}"
             )
 
-        best_idx = self.tuning_history["score_mean"].idxmax()
-        best_score = self.tuning_history.loc[best_idx, "score_mean"]
-        best_se = self.tuning_history.loc[best_idx, "score_se"]
+        valid_history = self.tuning_history[
+            ~self.tuning_history["score_mean"].isna()
+            & np.isfinite(self.tuning_history["score_mean"])
+        ]
+        if valid_history.empty:
+            raise ValueError("All scores are NaN or infinite")
+
+        best_idx = valid_history["score_mean"].idxmax()
+        best_score = valid_history.loc[best_idx, "score_mean"]
+        best_se = valid_history.loc[best_idx, "score_se"]
         threshold = best_score - best_se
 
-        eligible_mask = self.tuning_history["score_mean"] >= threshold
-        eligible_models = self.tuning_history[eligible_mask]
+        eligible_mask = valid_history["score_mean"] >= threshold
+        eligible_models = valid_history[eligible_mask]
 
         if ascending:
             selected_idx = eligible_models[param_parsim].idxmin()
@@ -167,6 +175,10 @@ class BayesianOptimizer:
                 "iters_without_improvement", 0
             )
             self.iters_since_jump = checkpoint.get("iters_since_jump", 0)
+            self.stop_iter = checkpoint["stop_iter"]
+            self.uncertain_jump = checkpoint["uncertain_jump"]
+            self.n_points = checkpoint["n_points"]
+
             return min(len(self.results), self.n_initial)
 
         return 0

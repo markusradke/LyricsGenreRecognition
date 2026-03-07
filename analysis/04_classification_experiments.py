@@ -11,8 +11,8 @@ C = 1.0
 L1_RATIO = 0.5
 
 N_JOBS = 1
-N_INITAL = 4  # 20
-N_ITERATIONS = 5  # 50
+N_INITAL = 20
+N_ITERATIONS = 50
 CV = 5
 N_POINTS = 1
 STOP_ITER = 15
@@ -116,7 +116,7 @@ EXPERIMENTS = [
     # ("topic", "lr", "classificator_topic_lr"),
     # ("style", "lr", "classificator_style_lr"),
     # ("combined", "lr", "classificator_topicstyle_lr"),
-    ("topic", "rf", "classificator_topic_rf"),
+    # ("topic", "rf", "classificator_topic_rf"),
     ("style", "rf", "classificator_style_rf"),
     ("combined", "rf", "classificator_topicstyle_rf"),
 ]

@@ -94,7 +94,7 @@ class GenreClassifierTrainer:
                         max_features=params.get("max_features"),
                         min_samples_leaf=params.get("min_samples_leaf"),
                         random_state=self.random_state,
-                        n_jobs=-1,
+                        n_jobs=-4,
                         class_weight="balanced",
                         verbose=1,
                     ),

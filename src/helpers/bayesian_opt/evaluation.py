@@ -48,6 +48,12 @@ def evaluate_params(
 
     mean_score = np.mean(scores)
     std_error = np.std(scores, ddof=1) / np.sqrt(len(scores))
+
+    if np.isnan(mean_score) or np.isnan(std_error):
+        print(f"WARNING: NaN score detected for params: {params}. Assigning -inf.")
+        mean_score = -np.inf
+        std_error = 0.0
+
     return mean_score, std_error
 
 

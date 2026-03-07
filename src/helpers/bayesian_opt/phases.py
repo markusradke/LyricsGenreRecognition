@@ -291,5 +291,8 @@ def _save_optimizer_checkpoint(optimizer) -> None:
         "best_score": optimizer.best_score,
         "iters_without_improvement": optimizer.iters_without_improvement,
         "iters_since_jump": optimizer.iters_since_jump,
+        "stop_iter": optimizer.stop_iter,
+        "uncertain_jump": optimizer.uncertain_jump,
+        "n_points": optimizer.n_points,
     }
     save_checkpoint(checkpoint_data, optimizer.checkpoint_dir, optimizer.model_hash)
