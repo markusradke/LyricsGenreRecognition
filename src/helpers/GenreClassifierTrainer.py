@@ -52,13 +52,16 @@ class GenreClassifierTrainer:
         else:
             self.feature_names_ = [f"feature_{i}" for i in range(X_train.shape[1])]
 
-    def _create_pipeline(self, params: dict[str, Any]) -> Pipeline:
+    def _create_pipeline(
+        self, params: dict[str, Any], n_estimators: int = 1000
+    ) -> Pipeline:
         """Create pipeline from parameters.
 
         Args:
             params: Pipeline parameters. The learner is chosen based on the params dictionary.
                 If dictionary contains 'C' and 'l1_ratio', a LogisticRegression with elastic net penalty is created.
                 If dictionary contains 'max_features' and 'min_samples_leaf' parameters, a RandomForestClassifier is created.
+                n_estimators: Number of trees for Random Forest (ignored for Logistic Regression)
 
         Returns:
             Configured pipeline. Always employs class-weighted loss.
@@ -87,10 +90,11 @@ class GenreClassifierTrainer:
                 (
                     "classifier",
                     RandomForestClassifier(
-                        n_estimators=1000,
+                        n_estimators=n_estimators,
                         max_features=params.get("max_features"),
-                        min_samples_split=params.get("min_samples_leaf"),
+                        min_samples_leaf=params.get("min_samples_leaf"),
                         random_state=self.random_state,
+                        n_jobs=-1,
                         class_weight="balanced",
                         verbose=1,
                     ),
@@ -129,6 +133,8 @@ class GenreClassifierTrainer:
         stop_iter: int = 20,
         uncertain_jump: int = 5,
         cv: int = 5,
+        n_estimators_tuning: int = 500,
+        n_estimators_final: int = 1000,
         checkpoint_dir: str | None = None,
     ) -> None:
         """Train model using Bayesian optimization.
@@ -140,9 +146,25 @@ class GenreClassifierTrainer:
             n_initial: Number of initial samples for Latin hypercube
             n_iterations: Number of Bayesian optimization iterations
             cv: Number of cross-validation folds
+            n_estimators_tuning: Number of trees for RF during tuning phase
+            n_estimators_final: Number of trees for RF in final model
             checkpoint_dir: Directory for checkpoints
             parsimony_param: Parameter to use for 1-SE rule
         """
+
+        is_random_forest = (
+            "max_features" in param_space and "min_samples_leaf" in param_space
+        )
+
+        if is_random_forest:
+            print(f"Using {n_estimators_tuning} trees during hyperparameter tuning...")
+
+            def pipeline_factory_tuning(params):
+                return self._create_pipeline(params, n_estimators=n_estimators_tuning)
+
+        else:
+            pipeline_factory_tuning = self._create_pipeline
+
         optimizer = BayesianOptimizer(
             param_space=param_space,
             n_initial=n_initial,
@@ -158,7 +180,7 @@ class GenreClassifierTrainer:
         )
 
         self.tuning_history_ = optimizer.run_search(
-            self._create_pipeline, self.X_train, self.y_train
+            pipeline_factory_tuning, self.X_train, self.y_train
         )
 
         print("Selecting best parameters according to 1-SE rule...")
@@ -167,8 +189,17 @@ class GenreClassifierTrainer:
         )
         print(f"{pd.DataFrame(self.best_params_, index=['Best Parameters:'])}")
 
-        print("Retraining best pipeline on full training data...")
-        self.best_pipeline_ = self._create_pipeline(self.best_params_)
+        if is_random_forest:
+            print(
+                f"Retraining best pipeline with {n_estimators_final} trees on full training data..."
+            )
+            self.best_pipeline_ = self._create_pipeline(
+                self.best_params_, n_estimators=n_estimators_final
+            )
+        else:
+            print("Retraining best pipeline on full training data...")
+            self.best_pipeline_ = self._create_pipeline(self.best_params_)
+
         self.best_pipeline_.fit(self.X_train, self.y_train)
 
         if "C" in self.best_params_ and "l1_ratio" in self.best_params_:

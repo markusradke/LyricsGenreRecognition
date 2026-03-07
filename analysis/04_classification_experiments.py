@@ -5,14 +5,14 @@ from scipy import sparse
 
 from helpers.LyricsClassficationExperiment import LyricsClassificationExperiment
 
-SUBSAMPLE_DEBUG = 1.0
+SUBSAMPLE_DEBUG = 0.005
 
 C = 1.0
 L1_RATIO = 0.5
 
-N_JOBS = 5
-N_INITAL = 20
-N_ITERATIONS = 100
+N_JOBS = 1
+N_INITAL = 4  # 20
+N_ITERATIONS = 5  # 50
 CV = 5
 N_POINTS = 1
 STOP_ITER = 15
@@ -112,10 +112,10 @@ def load_combined_features(granularity):
 
 # (feature_type, model_type, model_name_prefix)
 EXPERIMENTS = [
-    ("fs", "lr", "classificator_fs_lr"),
-    ("topic", "lr", "classificator_topic_lr"),
-    ("style", "lr", "classificator_style_lr"),
-    ("combined", "lr", "classificator_topicstyle_lr"),
+    # ("fs", "lr", "classificator_fs_lr"),
+    # ("topic", "lr", "classificator_topic_lr"),
+    # ("style", "lr", "classificator_style_lr"),
+    # ("combined", "lr", "classificator_topicstyle_lr"),
     ("topic", "rf", "classificator_topic_rf"),
     ("style", "rf", "classificator_style_rf"),
     ("combined", "rf", "classificator_topicstyle_rf"),
