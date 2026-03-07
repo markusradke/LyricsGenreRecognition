@@ -18,13 +18,11 @@ class BayesianOptimizer:
         param_space: dict[str, list[float]],
         n_initial: int = 20,
         n_iterations: int = 30,
-        n_points: int = 1,
         stop_iter: int = 10,
         uncertain_jump: int = 5,
         cv: int = 5,
         scoring: str = "f1_macro",
         random_state: int = 42,
-        n_jobs: int = 1,
         checkpoint_dir: str | None = None,
     ) -> None:
         """Initialize Bayesian optimizer.
@@ -33,31 +31,21 @@ class BayesianOptimizer:
             param_space: Parameter search space with ranges
             n_initial: Number of initial Latin hypercube samples
             n_iterations: Number of Bayesian optimization iterations
-            n_points: Number of candidates to evaluate in parallel per Bayesian
-                iteration. Each point counts individually toward stop_iter and
-                uncertain_jump. When >1, CV runs sequentially per candidate
-                (n_jobs workers are assigned to the outer parallel evaluation).
             stop_iter: Number of individual evaluations without improvement
                 before early stopping
             uncertain_jump: Number of individual evaluations without improvement
-                before an uncertainty-based exploration jump. If n_points > 1,
-                this is checked only after each batch, so the jump may be delayed
-                and applied to the complete next batch.
+                before an uncertainty-based exploration jump.
             cv: Number of cross-validation folds
             scoring: Scoring metric for evaluation
             random_state: Random seed for reproducibility
-            n_jobs: Number of parallel jobs. Used for the initial phase and for
-                evaluating n_points candidates in the Bayesian phase.
             checkpoint_dir: Directory for saving checkpoints (None to disable)
         """
         self.param_space = param_space
         self.n_initial = n_initial
         self.n_iterations = n_iterations
-        self.n_points = n_points
         self.cv = cv
         self.scoring = scoring
         self.random_state = random_state
-        self.n_jobs = n_jobs
         self.checkpoint_dir = Path(checkpoint_dir) if checkpoint_dir else None
         self.stop_iter = stop_iter
         self.uncertain_jump = uncertain_jump
@@ -153,7 +141,6 @@ class BayesianOptimizer:
             "param_space": self.param_space,
             "n_initial": self.n_initial,
             "n_iterations": self.n_iterations,
-            "n_points": self.n_points,
             "cv": self.cv,
             "scoring": self.scoring,
             "random_state": self.random_state,
@@ -177,7 +164,6 @@ class BayesianOptimizer:
             self.iters_since_jump = checkpoint.get("iters_since_jump", 0)
             self.stop_iter = checkpoint["stop_iter"]
             self.uncertain_jump = checkpoint["uncertain_jump"]
-            self.n_points = checkpoint["n_points"]
 
             return min(len(self.results), self.n_initial)
 

@@ -85,12 +85,7 @@ class LyricsClassificationExperiment:
         y_pred = pd.Series(sampled, index=self.y_test.index, name="pred")
         return LyricsClassificationMetrics(self.y_test, y_pred)
 
-    def _create_trainer(self, n_jobs=1):
-        """Create trainer with optional pipeline mode.
-
-        Args:
-            n_jobs: Number of parallel jobs
-        """
+    def _create_trainer(self):
         if isinstance(self.X_train, pd.DataFrame):
             feature_names = self.X_train.columns
         else:
@@ -102,7 +97,6 @@ class LyricsClassificationExperiment:
             self.X_test,
             self.y_test,
             self.random_state,
-            n_jobs,
             feature_names=feature_names,
         )
 
@@ -132,14 +126,12 @@ class LyricsClassificationExperiment:
         cv=5,
         n_initial=25,
         n_iterations=100,
-        n_points=1,
-        n_jobs=-1,
         stop_iter=20,
         uncertain_jump=5,
     ):
         starttime = pd.Timestamp.now()
         checkpoint_dir = self.output_dir + "/optimization_checkpoints"
-        trainer = self._create_trainer(n_jobs)
+        trainer = self._create_trainer()
         self._fit_and_store_results(
             trainer,
             "fit_with_bayesian_optimization",
@@ -147,7 +139,6 @@ class LyricsClassificationExperiment:
             parsimony_param=parsimony_param,
             parsimony_ascending=parsimony_ascending,
             n_initial=n_initial,
-            n_points=n_points,
             n_iterations=n_iterations,
             stop_iter=stop_iter,
             uncertain_jump=uncertain_jump,

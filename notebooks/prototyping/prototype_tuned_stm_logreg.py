@@ -40,7 +40,6 @@ experiment_stm.tune_and_train_logistic_regression(
     param_space=CLASSIFIER_PARAM_SPACE,
     n_initial=2,
     n_iterations=6,
-    n_points=2,
     n_jobs=-1,
     stop_iter=2,
     uncertain_jump=1,

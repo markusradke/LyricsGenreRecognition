@@ -120,4 +120,6 @@ def _select_best_candidate(
         selection_criterion = mu + 2.0 * sigma
 
     best_idx = int(np.argmax(selection_criterion))
-    return candidates[best_idx]
+    best_candidate = candidates[best_idx]
+    del X_candidates, mu, sigma, selection_criterion, candidates, gp
+    return best_candidate

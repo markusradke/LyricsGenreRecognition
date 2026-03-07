@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 
 from scipy import sparse
 
@@ -10,11 +9,9 @@ SUBSAMPLE_DEBUG = 1.0
 C = 1.0
 L1_RATIO = 0.5
 
-N_JOBS = 1
 N_INITAL = 20
 N_ITERATIONS = 50
 CV = 5
-N_POINTS = 1
 STOP_ITER = 15
 UNCERTAIN_JUMP = 5
 
@@ -71,9 +68,8 @@ def load_classification_features(type, granularity):
 
 def get_rf_param_space(X_train):
     return {
-        "max_features": (1 / X_train.shape[1], 1.0),
-        # log scale for min_samples_leaf from 1 to number of samples in training set
-        "min_samples_leaf": (np.log(1 / X_train.shape[0]), 0),
+        "max_features": (1, X_train.shape[1]),
+        "min_samples_leaf": (1, 100),
     }
 
 
@@ -92,8 +88,6 @@ def run_experiment(X_train, X_test, y_train, y_test, model_path, mode="lr"):
             cv=CV,
             n_initial=N_INITAL,
             n_iterations=N_ITERATIONS,
-            n_jobs=N_JOBS,
-            n_points=N_POINTS,
             stop_iter=STOP_ITER,
             uncertain_jump=UNCERTAIN_JUMP,
         )
@@ -116,13 +110,13 @@ EXPERIMENTS = [
     # ("topic", "lr", "classificator_topic_lr"),
     # ("style", "lr", "classificator_style_lr"),
     # ("combined", "lr", "classificator_topicstyle_lr"),
-    # ("topic", "rf", "classificator_topic_rf"),
-    ("style", "rf", "classificator_style_rf"),
-    ("combined", "rf", "classificator_topicstyle_rf"),
+    ("topic", "rf", "classificator_topic_rf"),
+    # ("style", "rf", "classificator_style_rf"),
+    # ("combined", "rf", "classificator_topicstyle_rf"),
 ]
 
 for feature_type, mode, name_prefix in EXPERIMENTS:
-    for granularity in [5, 12, 25]:
+    for granularity in [5]:  # [5, 12, 25]:
         if feature_type == "combined":
             X_train, X_test = load_combined_features(granularity)
         else:

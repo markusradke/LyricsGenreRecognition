@@ -21,7 +21,6 @@ class GenreClassifierTrainer:
         X_test: pd.DataFrame | pd.Series,
         y_test: pd.Series,
         random_state: int = 42,
-        n_jobs: int = 1,
         feature_names: list[str] | None = None,
     ) -> None:
         """Initialize trainer.
@@ -30,7 +29,6 @@ class GenreClassifierTrainer:
             X_train: Training features (DataFrame) or raw lyrics
             y_train: Training labels
             random_state: Random seed for reproducibility
-            n_jobs: Number of parallel jobs
             feature_names: Feature names for sparse matrices (auto-detected for DataFrames)
         """
         self.X_train = X_train
@@ -38,7 +36,6 @@ class GenreClassifierTrainer:
         self.X_test = X_test
         self.y_test = y_test
         self.random_state = random_state
-        self.n_jobs = n_jobs
         self.best_pipeline_ = None
         self.best_params_ = None
         self.coefficients_ = None
@@ -129,7 +126,6 @@ class GenreClassifierTrainer:
         parsimony_ascending: bool,
         n_initial: int = 25,
         n_iterations: int = 100,
-        n_points: int = 1,
         stop_iter: int = 20,
         uncertain_jump: int = 5,
         cv: int = 5,
@@ -169,13 +165,11 @@ class GenreClassifierTrainer:
             param_space=param_space,
             n_initial=n_initial,
             n_iterations=n_iterations,
-            n_points=n_points,
             stop_iter=stop_iter,
             uncertain_jump=uncertain_jump,
             cv=cv,
             scoring="f1_macro",
             random_state=self.random_state,
-            n_jobs=self.n_jobs,
             checkpoint_dir=checkpoint_dir,
         )
 
@@ -216,7 +210,6 @@ class GenreClassifierTrainer:
                 self.best_pipeline_,
                 self.X_test,
                 self.y_test,
-                n_jobs=self.n_jobs,
                 random_state=self.random_state,
             )
 
