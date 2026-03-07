@@ -58,6 +58,16 @@ def _early_stopping_reached(optimizer) -> bool:
     return optimizer.iters_without_improvement >= optimizer.stop_iter
 
 
+def _sync_best_score_from_results(optimizer) -> None:
+    """Initialise best_score from stored results if not yet set.
+
+    Called at the start of the Bayesian phase so that the initial-phase
+    results are taken into account before the first Bayesian evaluation.
+    """
+    if optimizer.best_score is None and optimizer.results:
+        optimizer.best_score = max(r["score_mean"] for r in optimizer.results)
+
+
 def run_bayesian_phase(optimizer, pipeline_factory, X, y) -> None:
     """Execute Bayesian optimization phase.
 
@@ -85,6 +95,8 @@ def run_bayesian_phase(optimizer, pipeline_factory, X, y) -> None:
         )
         print("=" * 60)
         return
+
+    _sync_best_score_from_results(optimizer)
 
     n_points = getattr(optimizer, "n_points", 1)
     cv_n_jobs = _bayesian_cv_n_jobs(optimizer.n_jobs, optimizer.cv, n_points)
