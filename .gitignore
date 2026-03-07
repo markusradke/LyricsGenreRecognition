@@ -1,8 +1,10 @@
+.~lock*
 data
 data-raw
 models
 .venv
-reports
+reports/*.html
+reports/paper_ismir/template
 analysis/_old
 notebooks/.ipynb_checkpoints/
 src/helpers/__pycache__/
