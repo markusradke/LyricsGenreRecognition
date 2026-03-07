@@ -35,6 +35,10 @@ def run_initial_phase(
     print("=" * 60)
 
     if completed_initial >= optimizer.n_initial:
+        print(
+            f"Initial phase already completed ({completed_initial}/{optimizer.n_initial}). Skipping."
+        )
+        print("=" * 60)
         return
 
     remaining_params = initial_params[completed_initial:]
@@ -47,6 +51,11 @@ def run_initial_phase(
         _run_initial_parallel(
             optimizer, pipeline_factory, X, y, remaining_params, completed_initial
         )
+
+
+def _early_stopping_reached(optimizer) -> bool:
+    """Return True if early stopping threshold has already been reached."""
+    return optimizer.iters_without_improvement >= optimizer.stop_iter
 
 
 def run_bayesian_phase(optimizer, pipeline_factory, X, y) -> None:
@@ -62,6 +71,20 @@ def run_bayesian_phase(optimizer, pipeline_factory, X, y) -> None:
     print("=" * 60)
     print("Starting Bayesian Phase:")
     print("=" * 60)
+
+    if completed_bayesian >= optimizer.n_iterations:
+        print(
+            f"Bayesian phase already completed ({completed_bayesian}/{optimizer.n_iterations}). Skipping."
+        )
+        print("=" * 60)
+        return
+
+    if _early_stopping_reached(optimizer):
+        print(
+            f"Early stopping already reached from checkpoint ({optimizer.iters_without_improvement}/{optimizer.stop_iter}). Skipping."
+        )
+        print("=" * 60)
+        return
 
     n_points = getattr(optimizer, "n_points", 1)
     cv_n_jobs = _bayesian_cv_n_jobs(optimizer.n_jobs, optimizer.cv, n_points)
@@ -82,7 +105,7 @@ def run_bayesian_phase(optimizer, pipeline_factory, X, y) -> None:
         if optimizer.checkpoint_dir:
             _save_optimizer_checkpoint(optimizer)
 
-        if optimizer.iters_without_improvement >= optimizer.stop_iter:
+        if _early_stopping_reached(optimizer):
             print("=" * 60)
             print(
                 f"Early stopping: No improvement for {optimizer.stop_iter} "

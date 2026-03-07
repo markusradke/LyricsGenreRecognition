@@ -213,7 +213,11 @@ class GenreClassifierTrainer:
         ):
             print("Calculating holdout permutation importance...")
             self.vip_ = permutation_importance(
-                self.best_pipeline_, self.X_test, self.y_test, n_jobs=self.n_jobs
+                self.best_pipeline_,
+                self.X_test,
+                self.y_test,
+                n_jobs=self.n_jobs,
+                random_state=self.random_state,
             )
 
     def fit_logistic_regression_with_fixed_params(
